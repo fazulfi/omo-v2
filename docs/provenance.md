@@ -2,8 +2,8 @@
 
 This fork exists solely to port [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent)
 (OMC) from the OpenCode **V1** plugin line (`@opencode-ai/plugin` 1.18.x) to the **V2** line
-(`@opencode/*` 2.0.20). It is a **private, internal-use fork**. It must never be published,
-redistributed, or made public without an explicit owner decision.
+(`@opencode/*` 2.0.20). Repository visibility is **public by owner decision** (2026-10-01);
+npm publishing and upstream pushes remain forbidden.
 
 ## 1. Upstream provenance
 
@@ -46,9 +46,13 @@ Analysis:
   zcloud development orchestration). OMC is not redistributed to customers, not embedded in
   any shipped product, and not resold.
 - **Verdict: PASS** — internal-use private fork is compliant with SUL-1.0.
-- **Prohibited regardless** (owner decision, stricter than the license): pushing to upstream,
-  npm publishing, making this repository public, or any redistribution. These stay blocked
-  unless the owner explicitly re-evaluates publication.
+- **Publication decision (owner, 2026-10-01)**: the owner explicitly approved public
+  visibility for this fork ("gpp public"). SUL-1.0 permits free-of-charge non-commercial
+  distribution; a public source repository with intact notices satisfies that mode. The
+  repository therefore runs public by owner decision.
+- **Still prohibited** (unchanged): pushing to `upstream`, npm publishing (publishing under
+  a package name implies a distribution channel the owner has not sanctioned), and removing
+  or altering license/attribution notices.
 
 ## 3. Toolchain pin (opencode v2 target)
 
