@@ -1,14 +1,16 @@
 import { Plugin } from "@opencode/plugin"
 import { z } from "zod"
+import { registerToolsAndHooks } from "./tools"
 
 /**
- * [OMC] v2 entry point — bootstrap lifecycle only (task 9).
+ * [OMC] v2 entry point — bootstrap lifecycle (task 9) + tools/hooks (task 10).
  *
  * This is the opencode v2 plugin contract port of the V1 `PluginModule`
  * entry (src/index.ts). Only the plugin definition, basic lifecycle
- * (setup/cleanup) and a bootstrap RPC surface live here; the feature
- * ports (tools/hooks, client, agents, background tasks, MCP, TUI) are
- * migrated in tasks 10-15 and wire into this entry.
+ * (setup/cleanup), a bootstrap RPC surface (omo.status) and the tools/hooks
+ * surface (omo.tools) live here; the remaining feature ports (client, agents,
+ * background tasks, MCP, TUI) are migrated in tasks 11-15 and wire into this
+ * entry.
  */
 const bootstrapRpc = {
   id: "omo",
@@ -27,9 +29,9 @@ export const omoV2Plugin = Plugin.define({
     await ctx.rpc.register(bootstrapRpc, {
       status: async () => ({ ok: true, stage: "bootstrap" }),
     })
-    return () => {
-      // Dispose (task 9): bootstrap RPC registration is torn down by the
-      // host on unload; feature teardowns are added by tasks 10-15.
+    const disposeTools = await registerToolsAndHooks(ctx)
+    return async () => {
+      await disposeTools()
     }
   },
 })
