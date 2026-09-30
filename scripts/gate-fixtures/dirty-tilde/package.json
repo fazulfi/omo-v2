@@ -1,0 +1,6 @@
+{
+  "name": "dirty-tilde-fixture",
+  "dependencies": {
+    "@opencode/plugin": "~2.0.20"
+  }
+}

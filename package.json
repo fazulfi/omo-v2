@@ -149,7 +149,10 @@
     "test:windows-codex": "bun run test:codex",
     "build:git-bash-mcp": "bun run --cwd packages/git-bash-mcp build",
     "build:ast-grep-mcp": "bun run --cwd packages/ast-grep-mcp build",
-    "test:desktop": "bun script/check-cargo-pinned-deps.mjs && bun run --cwd packages/senpi-desktop-protocol test && bun run --cwd packages/senpi-desktop-engine test && bun run --cwd packages/senpi-desktop-prelude test && bun run --cwd packages/senpi-desktop-service test && bun run --cwd packages/senpi-desktop-tool test"
+    "test:desktop": "bun script/check-cargo-pinned-deps.mjs && bun run --cwd packages/senpi-desktop-protocol test && bun run --cwd packages/senpi-desktop-engine test && bun run --cwd packages/senpi-desktop-prelude test && bun run --cwd packages/senpi-desktop-service test && bun run --cwd packages/senpi-desktop-tool test",
+    "gate:v1-imports": "bash scripts/gate-v1-imports.sh",
+    "gate:any": "bash scripts/gate-any.sh",
+    "gate:deps": "bash scripts/gate-deps.sh"
   },
   "keywords": [
     "opencode",

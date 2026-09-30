@@ -1,0 +1,7 @@
+{
+  "name": "clean-fixture",
+  "dependencies": {
+    "@opencode/plugin": "2.0.20",
+    "@opencode/client": "2.0.20"
+  }
+}
