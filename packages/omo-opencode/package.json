@@ -45,5 +45,8 @@
     "jsonc-parser": "^3.3.1",
     "picocolors": "^1.1.1",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.20"
   }
 }
