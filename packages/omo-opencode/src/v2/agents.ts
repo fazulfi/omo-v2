@@ -1270,6 +1270,19 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
         agent.permissions = [...(def.permissions ?? [])]
       })
     }
+
+    // V1 parity (assembleSisyphusEnabledConfig): demote the builtin
+    // 'build' and 'plan' agents to hidden subagents and make sisyphus the
+    // default primary agent. Production config has no default_agent key.
+    for (const builtinId of ["build", "plan"]) {
+      if (editor.get(builtinId) !== undefined) {
+        editor.update(builtinId, (agent) => {
+          agent.mode = "subagent"
+          agent.hidden = true
+        })
+      }
+    }
+    editor.default("sisyphus")
   })
 
   const rpc = await ctx.rpc.register(
