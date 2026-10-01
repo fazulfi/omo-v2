@@ -1,5 +1,5 @@
 import color from "picocolors"
-import { PUBLISHED_PACKAGE_NAME } from "../../../shared"
+import { PUBLISHED_PACKAGE_NAME } from "../../../shared/plugin-identity"
 import type { DoctorTarget } from "./types"
 
 export const SYMBOLS = {

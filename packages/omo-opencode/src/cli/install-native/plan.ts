@@ -1,4 +1,4 @@
-import { PUBLISHED_PACKAGE_NAME } from "../../shared"
+import { PUBLISHED_PACKAGE_NAME } from "../../shared/plugin-identity"
 import { getBundledVersion } from "../../hooks/auto-update-checker/checker/bundled-version"
 import { isPrereleaseVersion } from "../../hooks/auto-update-checker/version-channel"
 

@@ -1,11 +1,7 @@
 import { NATIVE_EDITION_GUIDE_URL } from "../../cli/native-edition-hint"
 import { formatNativeInstallEntryCommand, NATIVE_SETUP_COMMAND, resolveNativeInstallPlan } from "../../cli/install-native"
-import {
-  createNudgeStateStore,
-  nativeEditionStateDir,
-  type NudgeState,
-  type NudgeStateStore,
-} from "../../hooks/native-edition-nudge"
+import { createNudgeStateStore, nativeEditionStateDir, type NudgeStateStore } from "../../hooks/native-edition-nudge/state"
+import type { NudgeState } from "../../hooks/native-edition-nudge/types"
 import { NUDGE_SNOOZE_MS, NUDGE_STATE_VERSION } from "../../hooks/native-edition-nudge/types"
 
 export type NativeEditionNudgeAction = "install" | "guide" | "later" | "never"

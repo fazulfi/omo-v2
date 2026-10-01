@@ -1,6 +1,6 @@
 import { join } from "node:path"
 
-import { getOpenCodeCacheDir } from "../../../shared"
+import { getOpenCodeCacheDir } from "../../../shared/data-path"
 import type { AvailableModelsInfo, ModelResolutionInfo, OmoConfig } from "./model-resolution-types"
 import { formatModelWithVariant, getCategoryEffectiveVariant, getEffectiveVariant } from "./model-resolution-variant"
 

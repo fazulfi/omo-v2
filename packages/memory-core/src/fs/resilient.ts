@@ -134,15 +134,26 @@ export const open: typeof fsp.open = async (...args) => {
 }
 
 function isHandleTarget(value: fsSync.PathLike | fsp.FileHandle): value is fsp.FileHandle {
-  return typeof value === "object" && !(value instanceof URL) && !Buffer.isBuffer(value) && "fd" in value
+	return typeof value === "object" && !(value instanceof URL) && !Buffer.isBuffer(value) && "fd" in value
 }
 
-export const writeFile: typeof fsp.writeFile = async (file, data, options) => {
+/**
+ * `flush` is a non-standard write option accepted by Bun's fs implementation
+ * (flush the OS write buffer to disk before resolving); Node types do not
+ * declare it, so widen the parsed options with an optional flag.
+ */
+type FlushableWriteOptions = NonNullable<Parameters<typeof fsp.writeFile>[2]> & { flush?: boolean }
+
+export const writeFile: (
+  file: Parameters<typeof fsp.writeFile>[0],
+  data: Parameters<typeof fsp.writeFile>[1],
+  options?: FlushableWriteOptions,
+) => ReturnType<typeof fsp.writeFile> = async (file, data, options) => {
   if (typeof data !== "string" && !(data instanceof Uint8Array)) {
     return fsp.writeFile(file, data, options)
   }
   if (isHandleTarget(file)) {
-    const parsed = typeof options === "string" ? { encoding: options } : (options ?? {})
+    const parsed: FlushableWriteOptions = typeof options === "string" ? { encoding: options } : (options ?? {})
     parsed.signal?.throwIfAborted()
     await writeHandleAll(file, data, parsed.encoding ?? undefined, parsed.signal)
     if (parsed.flush === true) await retryOnEintr(() => file.sync())
@@ -151,12 +162,16 @@ export const writeFile: typeof fsp.writeFile = async (file, data, options) => {
   return writePathAll(file, data, options ?? undefined, "w")
 }
 
-export const appendFile: typeof fsp.appendFile = async (path, data, options) => {
+export const appendFile: (
+  path: Parameters<typeof fsp.appendFile>[0],
+  data: Parameters<typeof fsp.appendFile>[1],
+  options?: FlushableWriteOptions,
+) => ReturnType<typeof fsp.appendFile> = async (path, data, options) => {
   if (typeof data !== "string" && !(data instanceof Uint8Array)) {
     return fsp.appendFile(path, data, options)
   }
   if (isHandleTarget(path)) {
-    const parsed = typeof options === "string" ? { encoding: options } : (options ?? {})
+    const parsed: FlushableWriteOptions = typeof options === "string" ? { encoding: options } : (options ?? {})
     await writeHandleAll(path, data, parsed.encoding ?? undefined)
     if (parsed.flush === true) await retryOnEintr(() => path.sync())
     return

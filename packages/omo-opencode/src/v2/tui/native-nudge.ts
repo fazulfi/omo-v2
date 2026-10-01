@@ -6,8 +6,7 @@ import {
   NATIVE_NUDGE_OPTIONS,
   type NativeEditionNudgeAction,
 } from "../../features/native-edition-nudge/tui"
-import { nativeEditionStateDir } from "../../hooks/native-edition-nudge/hook"
-import { createNudgeStateStore } from "../../hooks/native-edition-nudge/state"
+import { createNudgeStateStore, nativeEditionStateDir } from "../../hooks/native-edition-nudge/state"
 
 /**
  * [OMC] v2 TUI native-edition nudge (task 15).

@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { getOpenCodeCacheDir, parseJsonc } from "../../../shared"
+import { getOpenCodeCacheDir } from "../../../shared/data-path"
+import { parseJsonc } from "../../../shared/jsonc-parser"
 import type { AvailableModelsInfo } from "./model-resolution-types"
 
 function getUserConfigDir(): string {

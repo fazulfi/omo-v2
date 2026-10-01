@@ -3,14 +3,12 @@ import { afterEach, beforeEach, mock, setDefaultTimeout } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { _resetForTesting as resetClaudeSessionState } from "./packages/omo-opencode/src/features/claude-code-session-state/state"
-import { _resetTaskToastManagerForTesting as resetTaskToastManager } from "./packages/omo-opencode/src/features/task-toast-manager/manager"
-import { _resetForTesting as resetModelFallbackState } from "./packages/omo-opencode/src/hooks/model-fallback/hook"
-import { RULES_INJECTOR_STORAGE } from "./packages/omo-opencode/src/hooks/rules-injector/constants"
+// Task 18 (V2-only fork): the V1-line omo-opencode sources were removed, so the
+// per-test resets they backed are gone with them. Everything else (vendored lsp-daemon,
+// senpi lazy barrels, hermetic HOME, env/cwd/global snapshots, mock hygiene) stays
+// because the remaining packages' tests rely on this preload.
 import { _resetMemCacheForTesting as resetConnectedProvidersCache } from "./packages/omo-opencode/src/shared/connected-providers-cache"
 import { getOmoOpenCodeCacheDir } from "./packages/omo-opencode/src/shared/data-path"
-import { releaseAllPromptAsyncReservationsForTesting } from "./packages/omo-opencode/src/shared/prompt-async-gate"
-import { resetLiveServerRouteForTesting } from "./packages/omo-opencode/src/shared/live-server-route"
 import { installModuleMockLifecycle } from "./packages/omo-opencode/src/testing/module-mock-lifecycle"
 import { ensureVendoredLspDaemonBuilt } from "./script/ensure-vendored-lsp-daemon"
 
@@ -78,22 +76,12 @@ function cleanupOmoCacheDir(cacheDir: string): void {
   rmSync(cacheDir, { recursive: true, force: true })
 }
 
-function cleanupRulesInjectorStorage(): void {
-  rmSync(RULES_INJECTOR_STORAGE, { recursive: true, force: true })
-}
-
 beforeEach(() => {
   environmentSnapshot = { ...process.env }
   workingDirectorySnapshot = process.cwd()
   process.env.OMO_DISABLE_POSTHOG = "true"
   cleanupOmoCacheDir(getOmoOpenCodeCacheDir())
-  cleanupRulesInjectorStorage()
-  resetClaudeSessionState()
-  resetTaskToastManager()
-  resetModelFallbackState()
   resetConnectedProvidersCache()
-  releaseAllPromptAsyncReservationsForTesting()
-  resetLiveServerRouteForTesting()
 })
 
 afterEach(() => {
@@ -126,11 +114,7 @@ afterEach(() => {
 
   cleanupOmoCacheDir(currentCacheDir)
   cleanupOmoCacheDir(getOmoOpenCodeCacheDir())
-  cleanupRulesInjectorStorage()
-  resetTaskToastManager()
   resetConnectedProvidersCache()
-  releaseAllPromptAsyncReservationsForTesting()
-  resetLiveServerRouteForTesting()
   isGlobalMockCleanup = true
   try {
     mock.restore()

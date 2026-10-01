@@ -1,9 +1,14 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
+import { getUserConfigDir } from "../auto-update-checker/constants"
 import { NUDGE_STATE_VERSION, type NudgeState, type NudgeStateRead } from "./types"
 
 export const NUDGE_STATE_FILE = "native-nudge.json"
+
+export function nativeEditionStateDir(): string {
+  return join(getUserConfigDir(), "oh-my-openagent")
+}
 
 export type NudgeStateStore = {
   readonly read: () => NudgeStateRead

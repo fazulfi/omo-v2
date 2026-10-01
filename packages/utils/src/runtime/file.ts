@@ -34,8 +34,12 @@ function createNodeFile(path: string): BunFileLike {
     },
     async arrayBuffer() {
       const buffer = await readFile(path)
-
-      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+      // Copy into a fresh ArrayBuffer: `buffer.buffer` is ArrayBufferLike
+      // (possibly SharedArrayBuffer), while the BunFileLike contract requires
+      // a plain ArrayBuffer.
+      const copy = new Uint8Array(buffer.byteLength)
+      copy.set(buffer)
+      return copy.buffer
     },
     exists() {
       return access(path).then(

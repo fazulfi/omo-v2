@@ -4,7 +4,7 @@
 
 ## OVERVIEW
 
-Harness-neutral domain primitives for team-mode: registry, mailbox, tasklist, state store, worktree, and tmux layout. Consumed by the OpenCode adapter at [omo-opencode team-mode](../omo-opencode/src/features/team-mode/AGENTS.md) (gated on `team_mode.enabled`). Package: `@oh-my-opencode/team-core`.
+Harness-neutral domain primitives for team-mode: registry, mailbox, tasklist, state store, worktree, and tmux layout. Consumed by the OpenCode adapter at omo-opencode team-mode (V1-line, removed in the opencode v2 port) (gated on `team_mode.enabled`). Package: `@oh-my-opencode/team-core`.
 
 ## DOMAIN PRIMITIVES
 
