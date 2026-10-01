@@ -1,5 +1,7 @@
 # oh-my-opencode — OpenCode Plugin
 
+> **V2 PORT NOTE (2026-10-01, fork `fazulfi/omo-v2`):** This fork is a **V2-only port** of the OMC plugin to `@opencode/plugin@2.0.20` + `@opencode/client@2.0.20`. The port surface lives in `packages/omo-opencode/src/v2/` (see `README.md` and `docs/v2-api-mapping.md`). The V1-line source described throughout the rest of this document was **removed** (2,493 files, task 18); paths such as `src/testing/create-plugin-module.ts`, `src/features/*`, `src/hooks/*`, `src/tools/*`, and `src/plugin/*` **no longer exist** in this fork — they refer to the pre-port architecture preserved in git history. For current structure, entry points, and verification, read `README.md` first.
+
 > **HOLD THE FUCK UP. THIS ENTIRE GODDAMN CODEBASE IS BEING RIPPED APART AND REBUILT RIGHT NOW. A MASSIVE MULTI-HARNESS AGENT OS REFACTOR IS IN PROGRESS — WE ARE RESTRUCTURING EVERYTHING TO SUPPORT MULTIPLE AGENT HARNESSES (OPENCODE, CODEX, PI, AND OTHERS). DO NOT TRUST THE STRUCTURE BELOW AS STABLE. READ THE [ROADMAP](./ROADMAP.md) BEFORE YOU TOUCH ANYTHING OR SO HELP ME GOD.**
 
 **Generated:** 2026-08-24 | **Source snapshot:** f3642fcda | **Branch:** initdeep-refresh-20260824 | **Release:** v5.0.0-beta.18

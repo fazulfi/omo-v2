@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenCode V2 port of the OMC plugin.** The plugin (`packages/omo-opencode`) now targets the official V2 plugin API — `@opencode/plugin@2.0.20`, `@opencode/client@2.0.20`, `@opencode/cli@2.0.20` (all pinned exactly). New server entry `src/v2/index.ts` (`Plugin.define`, RPC `omo.status`), TUI entry `src/v2/tui-entry.ts`, and ports for tools (`glob`/`grep` + 4 hooks), client (event-name mapping `@opencode-ai/sdk` → `@opencode/client`), agents (10 definitions + dispatch), orchestration (background tasks, continuation, todos), MCP injection, skills resolution, and config migration. See `docs/v2-api-mapping.md` and `docs/parity-matrix.md`.
+- Static gates: `gate:v1-imports`, `gate:any`, `gate:deps` (scripts in `scripts/`).
+- Documentation set: `docs/provenance.md`, `docs/v2-isolation.md`, `docs/v2-config-normalization.md`, `docs/v2-api-mapping.md`, `docs/parity-matrix.md`, `docs/cutover-runbook.md`, `docs/mcp-router-v2-addendum.md`.
+
+### Changed
+
+- Build retargeted to the V2 entries: `dist/index.js` (server) and `dist/tui-entry.js` (TUI); package exports `./tui` and `types` updated accordingly; stale `build:model-capabilities` script and deleted-test references removed.
+
+### Removed
+
+- **V1-line source removed (2,493 files).** After the port was verified, all modules importing `@opencode-ai/*` were deleted along with their tests and fixtures; the fork is V2-only. The V1 implementation remains in the upstream repository and this fork's git history.
+
 ## [5.1.4] - 2026-09-29
 
 ### Changed
