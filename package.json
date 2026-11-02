@@ -173,6 +173,8 @@
   },
   "homepage": "https://github.com/code-yeongyu/oh-my-openagent#readme",
   "dependencies": {
+    "@opencode/client": "2.0.20",
+    "@opencode/plugin": "2.0.20",
     "@opentui/solid": "^0.5.11",
     "detect-libc": "^2.1.2",
     "zod": "^4.6.5"

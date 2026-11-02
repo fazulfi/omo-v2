@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Gate: package.json deps must not use @opencode-ai/* (V1 line) and every
 # @opencode/* dependency must be pinned EXACTLY to 2.0.20 (no ^ or ~).
+# The root manifest is always checked in addition to the scanned target: the
+# plugin bundles are emitted into the repo-root dist/ and resolve their
+# externals from the repo-root node_modules, so the root package.json is the
+# manifest that actually decides whether the host can load them.
 # Usage: scripts/gate-deps.sh [target]   (default: packages/)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -21,9 +25,14 @@ for (const s of secs) {
 }
 if (errs.length) { console.error(process.argv[1] + ": " + errs.join("; ")); process.exit(1); }
 ' "$PJ" 2>&1) || { echo "$OUT" >&2; FAIL=1; }
-done < <(find "$TARGET" -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/.git/*')
+done < <(
+  {
+    printf '%s\n' package.json
+    find "$TARGET" -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/.git/*'
+  } | sort -u
+)
 if [ "$FAIL" -ne 0 ]; then
   echo "FAIL: dependency gate violations under $TARGET" >&2
   exit 1
 fi
-echo "PASS: deps clean under $TARGET"
+echo "PASS: deps clean under $TARGET (root manifest included)"

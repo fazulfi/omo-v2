@@ -70,6 +70,12 @@ Load the plugin into an OpenCode V2 host (config `plugins` array, absolute direc
 The host resolves the server entry from `exports["."]/import` (`dist/index.js`) and the TUI entry
 from `exports["./tui"]` (`dist/tui-entry.js`).
 
+`dist/index.js` and `dist/tui-entry.js` keep `@opencode/client` and `@opencode/plugin` as external
+imports, so the host resolves them from the repository root `node_modules`. The root
+`package.json` therefore declares both as runtime `dependencies`; `bun install` is what puts them
+where the bundles can reach them. A plugin installed from npm resolves them from the install
+directory instead, because npm installs a package's own `dependencies` alongside it.
+
 Companion stack used with this port (not vendored here):
 
 - **DCP** — `@tarquinen/opencode-dcp@3.2.0` (dual V1/V2 adapter, loads natively on V2)
