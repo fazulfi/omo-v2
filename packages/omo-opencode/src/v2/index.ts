@@ -5,6 +5,7 @@ import { registerMcp } from "./mcp"
 import { registerOrchestration } from "./orchestration"
 import { registerSkills } from "./skills"
 import { registerToolsAndHooks } from "./tools"
+import { registerUltrawork } from "./ultrawork"
 
 /**
  * [OMC] v2 entry point — full server-side wiring (tasks 9-15).
@@ -65,6 +66,12 @@ export const omoV2Plugin = Plugin.define({
       cleanups.push(await registerSkills(ctx))
     } catch (error) {
       console.error("[OMC] v2 registerSkills failed:", error)
+    }
+
+    try {
+      cleanups.push(await registerUltrawork(ctx))
+    } catch (error) {
+      console.error("[OMC] v2 registerUltrawork failed:", error)
     }
 
     return async () => {

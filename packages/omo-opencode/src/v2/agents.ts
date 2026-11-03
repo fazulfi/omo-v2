@@ -72,6 +72,23 @@ function allow(...tools: string[]): PermissionRule[] {
   return tools.map((tool) => ({ action: tool, resource: "*", effect: "allow" as const }))
 }
 
+/**
+ * OpenCode v2 evaluates an agent's `permissions` array as its entire ruleset: any
+ * action that matches no rule resolves to `ask` (`evaluate()` in opencode core falls
+ * back to `{effect:"ask"}`). The built-in allow-all base policy belongs to the default
+ * agent and is replaced the moment an agent defines its own `permissions`, so every
+ * OMC agent must seed it explicitly. The `.env` asks mirror the default agent policy.
+ *
+ * v2 action-name notes: `write`/`apply_patch` route through the `edit` action, and
+ * `task` was renamed to `subagent`.
+ */
+const BASE_PERMISSIONS: readonly PermissionRule[] = [
+  { action: "*", resource: "*", effect: "allow" },
+  { action: "read", resource: "*.env", effect: "ask" },
+  { action: "read", resource: "*.env.*", effect: "ask" },
+  { action: "read", resource: "*.env.example", effect: "allow" },
+]
+
 // ---------------------------------------------------------------------------
 // Shared prompt section (V1 `buildAntiDuplicationSection()` — inlined verbatim;
 // it is referenced by the sisyphus-junior and metis prompts)
@@ -1154,7 +1171,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
     mode: "primary",
     system: SISYPHUS_SYSTEM,
     color: "#00CED1",
-    permissions: [...allow("question"), ...deny("call_omo_agent")],
+    permissions: [...BASE_PERMISSIONS, ...allow("question"), ...deny("call_omo_agent")],
   },
   {
     id: "hephaestus",
@@ -1164,7 +1181,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
     mode: "primary",
     system: HEPHAESTUS_SYSTEM,
     color: "#D97706",
-    permissions: [...allow("question"), ...deny("call_omo_agent")],
+    permissions: [...BASE_PERMISSIONS, ...allow("question"), ...deny("call_omo_agent")],
   },
   {
     id: "oracle",
@@ -1173,7 +1190,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
       "Read-only consultation agent. High-IQ reasoning specialist for debugging hard problems and high-difficulty architecture design. (Oracle - [OMC])",
     mode: "subagent",
     system: ORACLE_SYSTEM,
-    permissions: [...deny("write", "edit", "apply_patch", "task")],
+    permissions: [...BASE_PERMISSIONS, ...deny("edit", "subagent", "call_omo_agent")],
   },
   {
     id: "librarian",
@@ -1182,7 +1199,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
       "Specialized codebase understanding agent for multi-repository analysis, searching remote codebases, retrieving official documentation, and finding implementation examples using GitHub CLI, Context7, and Web Search. MUST BE USED when users ask to look up code in remote repositories, explain library internals, or find usage examples in open source. (Librarian - [OMC])",
     mode: "subagent",
     system: LIBRARIAN_SYSTEM,
-    permissions: [...deny("write", "edit", "apply_patch", "task", "call_omo_agent")],
+    permissions: [...BASE_PERMISSIONS, ...deny("edit", "subagent", "call_omo_agent")],
   },
   {
     id: "explore",
@@ -1192,7 +1209,8 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
     mode: "subagent",
     system: EXPLORE_SYSTEM,
     permissions: [
-      ...deny("write", "edit", "apply_patch", "task", "call_omo_agent"),
+      ...BASE_PERMISSIONS,
+      ...deny("edit", "subagent", "call_omo_agent"),
       ...allow("lsp_symbols", "lsp_goto_definition", "lsp_find_references", "lsp_diagnostics"),
     ],
   },
@@ -1203,7 +1221,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
       "Analyze media files (PDFs, images, diagrams) that require interpretation beyond raw text. Extracts specific information or summaries from documents, describes visual content. Use when you need analyzed/extracted data rather than literal file contents. (Multimodal-Looker - [OMC])",
     mode: "subagent",
     system: MULTIMODAL_LOOKER_SYSTEM,
-    permissions: [...deny("*"), ...allow("read")],
+    permissions: [...BASE_PERMISSIONS, ...deny("*"), ...allow("read")],
   },
   {
     id: "metis",
@@ -1212,7 +1230,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
       "Pre-planning consultant that analyzes requests to identify hidden intentions, ambiguities, and AI failure points. (Metis - [OMC])",
     mode: "subagent",
     system: METIS_SYSTEM,
-    permissions: [...deny("write", "edit", "apply_patch")],
+    permissions: [...BASE_PERMISSIONS, ...deny("edit")],
   },
   {
     id: "momus",
@@ -1221,7 +1239,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
       "Expert reviewer for evaluating work plans against rigorous clarity, verifiability, and completeness standards. (Momus - [OMC])",
     mode: "subagent",
     system: MOMUS_SYSTEM,
-    permissions: [...deny("write", "edit", "apply_patch")],
+    permissions: [...BASE_PERMISSIONS, ...deny("edit")],
   },
   {
     id: "atlas",
@@ -1240,7 +1258,7 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
     mode: "subagent",
     system: SISYPHUS_JUNIOR_SYSTEM,
     color: "#20B2AA",
-    permissions: [...deny("task"), ...allow("call_omo_agent")],
+    permissions: [...BASE_PERMISSIONS, ...deny("subagent"), ...allow("call_omo_agent")],
   },
 ]
 
@@ -1267,7 +1285,13 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
         if (def.color !== undefined) {
           agent.color = def.color
         }
-        agent.permissions = [...(def.permissions ?? [])]
+        // Only override permissions when the definition restricts something. An
+        // unconditional `[...(def.permissions ?? [])]` would replace the default
+        // agent's allow-all base with an empty ruleset, and every unmatched
+        // action then resolves to `ask`.
+        if (def.permissions !== undefined) {
+          agent.permissions = [...def.permissions]
+        }
       })
     }
 

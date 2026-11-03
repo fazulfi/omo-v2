@@ -877,7 +877,7 @@ Current composition counts:
 
 | Hook                        | Event               | Description                                                                                                                                                 |
 | --------------------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **keyword-detector**        | Message             | IntentGate detector. Activates `ultrawork`/`ulw`, `team`, `hyperplan`, and `hyperplan-ultrawork` from message keywords. |
+| **keyword-detector**        | Message (V1) / `session.prompt` hook (V2) | IntentGate detector. Activates `ultrawork`/`ulw` from message keywords. V2: restored for ultrawork only (see `src/v2/ultrawork.ts`); `team`, `hyperplan`, and `hyperplan-ultrawork` remain unported on V2. |
 | **think-mode**              | Message             | On "think"/"ultrathink" in the user message, sets the message variant to `high` unless already a high variant.                                              |
 | **goal**                    | Event               | Re-injects a goal continuation prompt on session.idle while a goal is active; clears the goal on session.deleted.                                           |
 | **ulw-execute**              | Message + command.execute.before | After /ulw-execute is expanded, selects a work plan, initializes boulder state, scaffolds notepads, and injects plan context into the current session. |
