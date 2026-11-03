@@ -35,7 +35,7 @@
 | 13 | Background task collect + error path (no hang) | `omo.orch collect {task_id}` → status `error` tercatat + output deskriptif; TIDAK hang | **PASS\*** (jalur error terbukti; completion model-backed — lihat Limitasi) | task-19/13-collect.log |
 | 14 | Background task cancel | `omo.orch cancel` → session.interrupt real | **PASS** | task-13/runtime-proof.log |
 | 15 | Todo continuation (write/read roundtrip) | `omo.orch todoWrite {sessionID, todos:[…]}` → `{count:1}`; `todoRead` → todos kembali identik | **PASS** | task-19/{14-todo-write,15-todo-read}.log |
-| 16 | MCP injection | `omo.mcp list` → context7 connected, grep_app connected, websearch connected, lsp disabled (config-driven) | **PASS** | task-19/05-mcp-list.log; task-14/mcp-connected.log |
+| 16 | MCP injection | `omo.mcp list` → context7 connected, grep_app connected, websearch connected, lsp **connected** | **PASS** | task-19/05-mcp-list.log (lsp was `disabled` at the time — see the correction below); `fix/v2-lsp-mcp-report` evidence `20261103-v2-lsp-mcp-report/` |
 | 17 | MCP-router (owner live config) | Config V1 as-is (mcp-router localhost:9914) → normalisasi V2 konsisten task-3; tools/list smoke 9 tools mcp-router + filesystem 14 + playwright 23 + text-editor 1; config TIDAK di-rewrite (sha256 identical) | **PASS** | task-17/{mcp-router-v2-addendum.md, v2-mcp-list-out.log, mcp-router-smoke-out.log} |
 | 18 | Skills load | `omo.skill list` → listing (builtin opencode skill + lokasi fallback OMC) | **PASS** | task-19/06-skill-list.log; task-14/skill-list.log |
 | 19 | Config normalization (V1 config as-is) | `debug config` exit 0; sha256 before==after (in-memory, no rewrite); mapping model/plugin/provider/enabled_providers/mcp → V2 shape | **PASS** | task-3/{debug-config-stdout.log,config-hash-*}; docs/v2-config-normalization.md |
@@ -52,6 +52,22 @@ config/installer, TUI, DCP, tokenscope) terwakili baris 1–25. Entri CLI `omo` 
 omo-native TANPA `@opencode-ai` → di luar port scope (task-5 verdict), bukan bagian matrix.
 
 ## Limitasi terdokumentasi (bukan pengecualian diam-diam)
+
+### Koreksi setelah task-19: baris 16 (LSP MCP)
+
+Task-19 mencatat `lsp disabled (config-driven)` dan tetap menilai baris itu **PASS**. That is
+actually a functional hole, not parity: the V2 port never resolved the LSP daemon CLI, so the
+`lsp` server was registered with `disabled: true` and never spawned. The V1 resolver
+(`createLspMcpConfig`, ancestor CLI walk + `LSP_TOOLS_MCP_*` environment block) was deleted
+with the V1-line source and was not re-ported.
+
+Fixed by `fix/v2-lsp-mcp-report` (evidence: `.omo/evidence/20261103-v2-lsp-mcp-report/`).
+The same QA driver run against the pre-change build reports `lsp_status=disabled` with no
+`lsp_*` tools, and against the fixed build reports `lsp_status=connected` with all nine
+`lsp_*` tools present in the live tool registry. The task-19 row above now reflects the
+post-fix status; the task-19 log itself still shows the original `disabled` observation.
+
+Harness yang dipakai QA ini: `bash script/qa/lsp-mcp-qa.sh <plugin-dir>`.
 
 Harness menjalankan config dengan API key **dimask** (anti-leak). Empat baris PASS\*
 menandai bagian yang membutuhkan model live:
