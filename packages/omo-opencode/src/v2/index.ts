@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin"
 import { z } from "zod"
 import { registerAgents } from "./agents"
+import { registerKeywordDetector } from "./keyword-detector"
 import { registerMcp } from "./mcp"
 import { registerOrchestration } from "./orchestration"
 import { registerSkills } from "./skills"
@@ -59,6 +60,12 @@ export const omoV2Plugin = Plugin.define({
       cleanups.push(await registerMcp(ctx))
     } catch (error) {
       console.error("[OMC] v2 registerMcp failed:", error)
+    }
+
+    try {
+      cleanups.push(await registerKeywordDetector(ctx))
+    } catch (error) {
+      console.error("[OMC] v2 registerKeywordDetector failed:", error)
     }
 
     try {
