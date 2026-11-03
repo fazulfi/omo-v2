@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { bunWhich } from "../shared/bun-which-shim"
+import { getOpenCodeConfigDir } from "../shared/opencode-config-dir"
 
 /**
  * [OMC] v2 LSP MCP server resolution.
@@ -64,6 +64,8 @@ export interface LspServerConfigOptions {
   readonly cwd: string
   readonly env?: Record<string, string | undefined>
   readonly resolution?: LspDaemonResolutionOptions
+  /** Override for the OpenCode config dir; defaults to the shared resolver. */
+  readonly configDir?: string
 }
 
 function resolveModuleDirectory(moduleUrl: string): string | null {
@@ -136,15 +138,12 @@ export function resolveLspDaemon(options: LspDaemonResolutionOptions = {}): LspD
 }
 
 /**
- * The directory OpenCode reads its own config from. `OPENCODE_CONFIG_DIR` wins;
- * otherwise the XDG config directory plus `opencode`.
+ * The directory OpenCode reads its own config from. The shared helper owns that
+ * resolution (`OPENCODE_CONFIG_DIR`, XDG, the WSL/Windows/Tauri rules), so the
+ * LSP server and the rest of the plugin agree on one answer.
  */
-export function resolveOpenCodeConfigDir(env: Record<string, string | undefined> = process.env): string {
-  const explicit = env["OPENCODE_CONFIG_DIR"]
-  if (explicit !== undefined && explicit.length > 0) return resolve(explicit)
-  const xdg = env["XDG_CONFIG_HOME"]
-  const base = xdg !== undefined && xdg.length > 0 ? xdg : join(homedir(), ".config")
-  return resolve(base, "opencode")
+export function resolveOpenCodeConfigDir(): string {
+  return getOpenCodeConfigDir({ binary: "opencode" })
 }
 
 function buildLspEnvironment(
@@ -181,7 +180,7 @@ function buildLspEnvironment(
 export function createLspServerConfig(options: LspServerConfigOptions): LspServerConfig {
   const env = options.env ?? process.env
   const cwd = resolve(options.cwd)
-  const configDir = resolveOpenCodeConfigDir(env)
+  const configDir = options.configDir ?? resolveOpenCodeConfigDir()
   const environment = buildLspEnvironment(cwd, configDir, env)
   const daemon = resolveLspDaemon(options.resolution)
 

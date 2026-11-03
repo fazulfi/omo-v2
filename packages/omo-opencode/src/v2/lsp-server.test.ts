@@ -66,12 +66,30 @@ describe("resolveLspDaemon", () => {
 })
 
 describe("resolveOpenCodeConfigDir", () => {
-  test("#given OPENCODE_CONFIG_DIR #when resolving #then it wins", () => {
-    expect(resolveOpenCodeConfigDir({ OPENCODE_CONFIG_DIR: "/custom/opencode" })).toBe("/custom/opencode")
+  test("#given OPENCODE_CONFIG_DIR #when resolving #then the shared resolver honours it", () => {
+    const previous = process.env["OPENCODE_CONFIG_DIR"]
+    process.env["OPENCODE_CONFIG_DIR"] = "/custom/opencode"
+    try {
+      expect(resolveOpenCodeConfigDir()).toBe("/custom/opencode")
+    } finally {
+      if (previous === undefined) delete process.env["OPENCODE_CONFIG_DIR"]
+      else process.env["OPENCODE_CONFIG_DIR"] = previous
+    }
   })
 
-  test("#given XDG_CONFIG_HOME #when resolving #then it appends the opencode directory", () => {
-    expect(resolveOpenCodeConfigDir({ XDG_CONFIG_HOME: "/xdg" })).toBe(join("/xdg", "opencode"))
+  test("#given no override #when resolving #then the shared resolver falls back to the XDG config dir", () => {
+    const previousDir = process.env["OPENCODE_CONFIG_DIR"]
+    const previousXdg = process.env["XDG_CONFIG_HOME"]
+    delete process.env["OPENCODE_CONFIG_DIR"]
+    process.env["XDG_CONFIG_HOME"] = "/xdg"
+    try {
+      expect(resolveOpenCodeConfigDir()).toBe(join("/xdg", "opencode"))
+    } finally {
+      if (previousDir === undefined) delete process.env["OPENCODE_CONFIG_DIR"]
+      else process.env["OPENCODE_CONFIG_DIR"] = previousDir
+      if (previousXdg === undefined) delete process.env["XDG_CONFIG_HOME"]
+      else process.env["XDG_CONFIG_HOME"] = previousXdg
+    }
   })
 })
 
@@ -91,7 +109,8 @@ describe("createLspServerConfig", () => {
   test("#given a resolvable daemon #when building the config #then it exports the full LSP_TOOLS_MCP environment", () => {
     const config = createLspServerConfig({
       cwd: "/work/project",
-      env: { XDG_CONFIG_HOME: "/xdg" },
+      env: {},
+      configDir: "/xdg/opencode",
       resolution: { moduleUrl: MODULE_URL, exists: pathExistsFor([DIST_CLI]), which: whichAll },
     })
 
@@ -103,9 +122,9 @@ describe("createLspServerConfig", () => {
         join("/work/project", ".omo/lsp-client.json"),
       ].join(delimiter),
     )
-    expect(config.environment["LSP_TOOLS_MCP_USER_CONFIG"]).toBe(join("/xdg", "opencode", "lsp.json"))
+    expect(config.environment["LSP_TOOLS_MCP_USER_CONFIG"]).toBe(join("/xdg/opencode", "lsp.json"))
     expect(config.environment["LSP_TOOLS_MCP_INSTALL_DECISIONS"]).toBe(
-      join("/xdg", "opencode", "lsp-install-decisions.json"),
+      join("/xdg/opencode", "lsp-install-decisions.json"),
     )
   })
 

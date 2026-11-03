@@ -44,7 +44,11 @@ V2 plugin contract with `ctx.mcp.transform((editor) => editor.set(name, config))
   `<cwd>` is the OpenCode project directory (`ctx.location.directory`).
 - The user-level inputs are OpenCode config paths: `<opencode config dir>/lsp.json` for server
   config and `<opencode config dir>/lsp-install-decisions.json` for install decisions. The
-  OpenCode config dir is `OPENCODE_CONFIG_DIR`, or `$XDG_CONFIG_HOME/opencode`.
+  OpenCode config dir comes from the shared resolver
+  `getOpenCodeConfigDir({ binary: "opencode" })`
+  (`packages/omo-opencode/src/shared/opencode-config-dir.ts`), so the LSP server and the rest
+  of the plugin agree on one answer: `OPENCODE_CONFIG_DIR`, else the XDG config directory plus
+  `opencode`, with the shared WSL/Windows/Tauri rules.
 
 ## THREE-TIER SYSTEM
 
