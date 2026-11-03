@@ -1,5 +1,6 @@
 import type { Plugin } from "@opencode/plugin"
 import { z } from "zod"
+import { createLspServerConfig as resolveLspServerConfig } from "./lsp-server"
 
 /**
  * [OMC] v2 MCP injection port (task 14a).
@@ -149,22 +150,26 @@ export function createWebsearchConfig(
 }
 
 /**
- * LSP builtin (parity with src/mcp/lsp.ts `createLspMcpConfig`). V1 sets
- * `enabled: false` when the lsp-daemon CLI is not resolvable; the isolated V2
- * harness has no daemon, so this injects a disabled local server. The full
- * daemon bootstrap (ancestor CLI resolver + npm install steps) is NOT ported —
- * see the honest-limitation note in the task evidence.
+ * LSP builtin (parity with src/mcp/lsp.ts `createLspMcpConfig`).
+ *
+ * The resolver itself lives in `./lsp-server`: it walks ancestors for the
+ * built `packages/lsp-daemon/dist/cli.js` (preferred) or the TypeScript source
+ * `packages/lsp-daemon/src/cli.ts`, and builds the full `LSP_TOOLS_MCP_*`
+ * environment block the daemon proxy needs to find project and user LSP
+ * server configs. The server stays registered but disabled when no daemon CLI
+ * resolves, which OpenCode reports honestly instead of failing plugin load.
  */
 export function createLspServerConfig(
+  cwd: string,
   env: Record<string, string | undefined> = process.env,
 ): V1LocalMcpConfig {
-  const daemonCli = env.OMO_LSP_DAEMON_CLI
-  const available = typeof daemonCli === "string" && daemonCli.length > 0
+  const config = resolveLspServerConfig({ cwd, env })
   return {
     type: "local",
-    command: available ? [daemonCli, "mcp"] : ["node", "-e", "process.exit(1)"],
-    enabled: available,
-    ...(env.LSP_TOOLS_MCP_CWD !== undefined ? { cwd: env.LSP_TOOLS_MCP_CWD } : {}),
+    command: config.command,
+    enabled: config.enabled,
+    cwd: config.cwd,
+    environment: config.environment,
   }
 }
 
@@ -176,6 +181,8 @@ export type BuiltinMcpOptions = {
   readonly disabledMcps?: readonly string[]
   readonly env?: Record<string, string | undefined>
   readonly websearchProvider?: "exa" | "tavily"
+  /** Project directory the local servers resolve their configs against. */
+  readonly cwd?: string
 }
 
 export function createBuiltinMcps(options: BuiltinMcpOptions = {}): Record<string, V1McpConfig> {
@@ -194,7 +201,7 @@ export function createBuiltinMcps(options: BuiltinMcpOptions = {}): Record<strin
     mcps.grep_app = createGrepAppConfig()
   }
   if (!disabled.has("lsp")) {
-    mcps.lsp = createLspServerConfig(env)
+    mcps.lsp = createLspServerConfig(options.cwd ?? process.cwd(), env)
   }
 
   return mcps
@@ -231,7 +238,12 @@ export async function registerMcp(
   ctx: PluginContext,
   options: RegisterMcpOptions = {},
 ): Promise<() => Promise<void>> {
-  const builtins = createBuiltinMcps(options)
+  const builtins = createBuiltinMcps({
+    ...options,
+    // Local servers resolve their project-scoped configs against the OpenCode
+    // project directory, not the plugin process cwd.
+    cwd: options.cwd ?? ctx.location.directory,
+  })
   const servers: Record<string, V1McpConfig> = { ...builtins, ...(options.extraServers ?? {}) }
 
   for (const [name, v1] of Object.entries(servers)) {
