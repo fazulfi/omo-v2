@@ -3,8 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as nodePath from "node:path"
 import { ultraworkPromptVariants } from "@oh-my-opencode/prompts-core"
+import { detectThinkKeyword, looksLikeSlashCommand, stripCodeBlocks } from "./detection"
 import { detectUltraworkSource, isNonOmoAgent } from "./modes"
-import { looksLikeSlashCommand, stripCodeBlocks } from "./detection"
+import { isAlreadyHighVariant } from "./think-mode"
 import { registerKeywordDetector, type PluginContext } from "./index"
 
 /**
@@ -26,6 +27,7 @@ import { registerKeywordDetector, type PluginContext } from "./index"
 interface FakeSessionInfo {
   agent?: string
   parentID?: string
+  model?: { id: string; providerID: string; variant?: string }
 }
 
 interface SwitchModelCall {
@@ -279,6 +281,106 @@ describe("ultrawork arm", () => {
     const event = promptEvent("ulw on gpt")
     await harness.prompt(event)
     expect(event.prompt.text).toContain(ultraworkPromptVariants.gpt.content)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Think arm (V1 hooks/think-mode parity)
+// ---------------------------------------------------------------------------
+
+describe("think arm", () => {
+  it("#given think keywords #when detecting #then English and multilingual arms fire", () => {
+    expect(detectThinkKeyword("think about this carefully")).toBe(true)
+    expect(detectThinkKeyword("ULTRATHINK the design")).toBe(true)
+    expect(detectThinkKeyword("이 부분을 제대로 검토해줘")).toBe(true)
+    expect(detectThinkKeyword("reflectă la asta")).toBe(true)
+  })
+
+  it("#given non-think text #when detecting #then nothing fires", () => {
+    expect(detectThinkKeyword("just ship it")).toBe(false)
+    expect(detectThinkKeyword("look at ```think``` in code")).toBe(false)
+  })
+
+  it("#given model refs #when checking already-high #then high+ variants and -high ids are detected", () => {
+    expect(isAlreadyHighVariant("claude-sonnet-4-6", "high")).toBe(true)
+    expect(isAlreadyHighVariant("claude-sonnet-4-6", "xhigh")).toBe(true)
+    expect(isAlreadyHighVariant("claude-sonnet-4-6", "max")).toBe(true)
+    expect(isAlreadyHighVariant("claude-sonnet-4-6-high")).toBe(true)
+    expect(isAlreadyHighVariant("gpt-5.4-high")).toBe(true)
+    expect(isAlreadyHighVariant("vertex_ai/claude-opus-4-7-high")).toBe(true)
+    expect(isAlreadyHighVariant("claude-sonnet-4-6")).toBe(false)
+    expect(isAlreadyHighVariant("claude-sonnet-4-6", "low")).toBe(false)
+    expect(isAlreadyHighVariant("gpt-5.4", "medium")).toBe(false)
+  })
+
+  it("#given a think message on a variantless model #when the prompt hook runs #then switchModel raises the variant to high on the same model", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-sonnet-4-6", providerID: "anthropic" } })
+    await harness.prompt(promptEvent("think hard about the failure"))
+    expect(harness.switchModelCalls).toEqual([
+      { sessionID: "ses_test", model: { id: "claude-sonnet-4-6", providerID: "anthropic", variant: "high" } },
+    ])
+  })
+
+  it("#given a dotted model id #when the raise fires #then the same id is preserved (no model switch)", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "gpt-5.4", providerID: "openai" } })
+    await harness.prompt(promptEvent("ultrathink this one"))
+    expect(harness.switchModelCalls).toEqual([
+      { sessionID: "ses_test", model: { id: "gpt-5.4", providerID: "openai", variant: "high" } },
+    ])
+  })
+
+  it("#given an already-high session #when a think message arrives #then no switch happens", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-sonnet-4-6", providerID: "anthropic", variant: "max" } })
+    await harness.prompt(promptEvent("think as hard as possible"))
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-opus-4-7-high", providerID: "anthropic" } })
+    await harness.prompt(promptEvent("think again"))
+    expect(harness.switchModelCalls).toHaveLength(0)
+  })
+
+  it("#given a low variant session #when a think message arrives #then the variant is raised to high", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-sonnet-4-6", providerID: "anthropic", variant: "low" } })
+    await harness.prompt(promptEvent("think it through"))
+    expect(harness.switchModelCalls).toHaveLength(1)
+    expect(harness.switchModelCalls[0]?.model.variant).toBe("high")
+  })
+
+  it("#given a session without a model #when a think message arrives #then no switch is attempted", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus" })
+    await harness.prompt(promptEvent("think without a model"))
+    expect(harness.switchModelCalls).toHaveLength(0)
+  })
+
+  it("#given a slash command #when the prompt hook runs #then the think arm is gated too", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-sonnet-4-6", providerID: "anthropic" } })
+    await harness.prompt(promptEvent("/think-command run"))
+    expect(harness.switchModelCalls).toHaveLength(0)
+  })
+
+  it("#given a subagent session #when a think message arrives #then the raise still fires (V1 parity: no agent gating)", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({
+      agent: "sisyphus",
+      parentID: "ses_parent",
+      model: { id: "claude-sonnet-4-6", providerID: "anthropic" },
+    })
+    await harness.prompt(promptEvent("think in the subagent"))
+    expect(harness.switchModelCalls).toHaveLength(1)
+  })
+
+  it("#given an ultrawork-armed session #when a later message asks to think #then the raise still fires", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", model: { id: "claude-sonnet-4-6", providerID: "anthropic" } })
+    await harness.prompt(promptEvent("ulw start"))
+    expect(harness.switchModelCalls).toHaveLength(0)
+    await harness.prompt(promptEvent("think more"))
+    expect(harness.switchModelCalls).toHaveLength(1)
+    expect(harness.switchModelCalls[0]?.model.variant).toBe("high")
   })
 })
 

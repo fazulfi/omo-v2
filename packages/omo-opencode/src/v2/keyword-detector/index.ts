@@ -2,8 +2,9 @@ import { promises as nodeFs } from "node:fs"
 import * as nodePath from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { OhMyOpenCodeConfigSchema } from "../../config/schema/oh-my-opencode-config"
-import { DISARM_PATTERN, looksLikeSlashCommand, stripCodeBlocks, ULTRAWORK_PATTERN } from "./detection"
+import { detectThinkKeyword, DISARM_PATTERN, looksLikeSlashCommand, stripCodeBlocks, ULTRAWORK_PATTERN } from "./detection"
 import { detectUltraworkSource, getUltraworkDirective, isNonOmoAgent, ULTRAWORK_MODE_TAG } from "./modes"
+import { isAlreadyHighVariant } from "./think-mode"
 
 /**
  * [OMC] v2 keyword detector (restores the V1 `hooks/keyword-detector` arms).
@@ -31,13 +32,36 @@ import { detectUltraworkSource, getUltraworkDirective, isNonOmoAgent, ULTRAWORK_
  *     system part carries the mode marker AND no message in the request still
  *     contains it (post-compaction restoration).
  *
- * Scope: `ultrawork` only in this refactor (the module this file replaces,
- * `src/v2/ultrawork.ts`, was identical in behavior). The remaining V1 arms —
- * think, team, hyperplan, and the hyperplan-ultrawork combo — land on top of
- * this shared hook pair in follow-up commits on this branch.
+ * Scope: `ultrawork` plus the `think` arm. The remaining V1 arms — team,
+ * hyperplan, and the hyperplan-ultrawork combo — land on top of this shared
+ * hook pair in follow-up commits on this branch.
+ *
+ * Think mode (V1 `hooks/think-mode/`): `think`/`ultrathink` (plus V1's
+ * multilingual arms) detected in the SAME prompt hook — code-stripped and
+ * slash-gated like ultrawork — then the session's reasoning variant is raised
+ * to `high` via `session.switchModel` with the SAME model id/providerID
+ * (never a model switch). The variant rides the session's `Model.Ref`, so it
+ * survives compaction with no per-request re-application; `event.options` in
+ * the context hook was rejected as the seam because `variant` is not a
+ * `GenerationOptionsFields` key and would land in untyped provider options.
+ * Unlike the directive arms, think is not agent-gated (V1 parity: the V1
+ * think hook had no agent/subagent gating) and needs no disarm — the raise is
+ * idempotent and "already high+" sessions are left alone.
  */
 
 export type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
+
+interface SessionModelRef {
+  id: string
+  providerID: string
+  variant?: string
+}
+
+interface SessionInfo {
+  agent?: string
+  parentID?: string
+  model?: SessionModelRef
+}
 
 interface ArmedSession {
   readonly source: ReturnType<typeof detectUltraworkSource>
@@ -113,8 +137,30 @@ export async function registerKeywordDetector(ctx: PluginContext): Promise<() =>
     switchModel?: (input: { sessionID: string; model: { id: string; providerID: string; variant?: string } }) => Promise<void>
   }).switchModel
   const sessionGet = (ctx.session as unknown as {
-    get?: (input: { id: string }) => Promise<{ agent?: string; parentID?: string }>
+    get?: (input: { id: string }) => Promise<SessionInfo>
   }).get
+
+  /**
+   * Think arm: raise the session's reasoning variant to `high` on the SAME
+   * model. Idempotent — "already high+" sessions keep their variant. The
+   * switch lands before the turn's first request because prompt admission
+   * blocks on this hook.
+   */
+  async function raiseThinkVariant(sessionID: string, getSessionInfo: () => Promise<SessionInfo | undefined>) {
+    if (typeof switchModel !== "function") return
+    const model = (await getSessionInfo())?.model
+    if (!model?.id || !model.providerID) return
+    if (isAlreadyHighVariant(model.id, model.variant)) return
+    try {
+      await Promise.race([
+        switchModel({ sessionID, model: { id: model.id, providerID: model.providerID, variant: "high" } }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
+      ])
+      console.error(`[OMC] think-mode: variant raised to high (${model.providerID}/${model.id})`)
+    } catch (error) {
+      console.error("[OMC] think-mode: switchModel failed; continuing with the current variant", error)
+    }
+  }
 
   const promptHook = await ctx.session.hook("prompt", async (event) => {
     const sessionID = event.sessionID as string
@@ -124,14 +170,37 @@ export async function registerKeywordDetector(ctx: PluginContext): Promise<() =>
       armed.delete(sessionID)
       return
     }
-    if (looksLikeSlashCommand(text) || armed.has(sessionID)) return
+    if (looksLikeSlashCommand(text)) return
 
     const config = await loadOmoConfig(ctx.location?.directory)
+    const stripped = stripCodeBlocks(text)
+
+    // Think arm first: it is independent of directive arming and, by V1
+    // parity, not agent-gated — a subagent or builder session still gets the
+    // variant raise when the user's message asks for maximum reasoning.
+    if (detectThinkKeyword(stripped)) {
+      let sessionInfo: SessionInfo | undefined
+      let loaded = false
+      const getSessionInfo = async (): Promise<SessionInfo | undefined> => {
+        if (!loaded) {
+          loaded = true
+          try {
+            sessionInfo = await sessionGet?.({ id: sessionID })
+          } catch {
+            // Session lookup is best-effort; the raise is skipped.
+          }
+        }
+        return sessionInfo
+      }
+      await raiseThinkVariant(sessionID, getSessionInfo)
+    }
+
+    if (armed.has(sessionID)) return
     if (config?.keyword_detector?.disabled_keywords?.includes("ultrawork")) return
     const allowlist = config?.keyword_detector?.enabled_expansions
     if (allowlist && !allowlist.includes("ultrawork")) return
 
-    const detected = ULTRAWORK_PATTERN.test(stripCodeBlocks(text))
+    const detected = ULTRAWORK_PATTERN.test(stripped)
     const autoArm = config?.default_mode?.ultrawork === true
     if (!detected && !autoArm) return
 
