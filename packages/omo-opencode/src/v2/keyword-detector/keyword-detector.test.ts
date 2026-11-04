@@ -2,9 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as nodePath from "node:path"
-import { ultraworkPromptVariants } from "@oh-my-opencode/prompts-core"
-import { detectThinkKeyword, looksLikeSlashCommand, stripCodeBlocks } from "./detection"
-import { detectUltraworkSource, isNonOmoAgent } from "./modes"
+import { HYPERPLAN_MODE_PROMPT, TEAM_MODE_PROMPT, ultraworkPromptVariants } from "@oh-my-opencode/prompts-core"
+import {
+  detectKeywordTypes,
+  detectThinkKeyword,
+  HYPERPLAN_PATTERN,
+  HYPERPLAN_ULTRAWORK_PATTERN,
+  looksLikeSlashCommand,
+  stripCodeBlocks,
+  TEAM_PATTERN,
+} from "./detection"
+import { detectUltraworkSource, isNonOmoAgent, MODE_MARKERS, resolveModeBody } from "./modes"
 import { isAlreadyHighVariant } from "./think-mode"
 import { registerKeywordDetector, type PluginContext } from "./index"
 
@@ -169,6 +177,75 @@ describe("keyword detection primitives", () => {
     expect(isNonOmoAgent(undefined)).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Team / hyperplan / combo detection (V1 keyword-detector parity)
+// ---------------------------------------------------------------------------
+
+describe("team and hyperplan detection", () => {
+  it("#given team mode spellings #when detecting #then the team arm fires on every V1 spelling", () => {
+    for (const text of ["use team mode", "team-mode please", "team_mode now", "TEAMMODE!"]) {
+      expect(TEAM_PATTERN.test(text)).toBe(true)
+      expect(detectKeywordTypes(text)).toContain("team")
+    }
+    expect(detectKeywordTypes(" teamwork only")).not.toContain("team")
+  })
+
+  it("#given hyperplan triggers #when detecting #then the hyperplan arm fires", () => {
+    expect(HYPERPLAN_PATTERN.test("hyperplan this feature")).toBe(true)
+    expect(detectKeywordTypes("hpp this feature")).toEqual(["hyperplan"])
+  })
+
+  it("#given a cpp header path #when detecting #then hyperplan does not fire (upstream #4215)", () => {
+    expect(detectKeywordTypes("look at src/buffer.hpp please")).toEqual([])
+  })
+
+  it("#given adjacent hyperplan and ultrawork #when detecting #then the combo fires and suppresses the standalones", () => {
+    expect(HYPERPLAN_ULTRAWORK_PATTERN.test("hyperplan ultrawork this")).toBe(true)
+    expect(HYPERPLAN_ULTRAWORK_PATTERN.test("ulw hpp go")).toBe(true)
+    expect(detectKeywordTypes("hyperplan ultrawork this")).toEqual(["hyperplan-ultrawork"])
+  })
+
+  it("#given non-adjacent hyperplan and ultrawork #when detecting #then both standalones fire without the combo", () => {
+    expect(HYPERPLAN_ULTRAWORK_PATTERN.test("hpp here and ultrawork over there")).toBe(false)
+    expect(detectKeywordTypes("hpp here and ultrawork over there")).toEqual(["ultrawork", "hyperplan"])
+  })
+
+  it("#given disabled keywords #when detecting #then disabled arms are gated and the combo needs both bases", () => {
+    expect(detectKeywordTypes("team mode", { disabledKeywords: ["team"] })).toEqual([])
+    expect(detectKeywordTypes("hyperplan ultrawork", { disabledKeywords: ["ultrawork"] })).toEqual(["hyperplan"])
+    expect(detectKeywordTypes("hyperplan ultrawork", { disabledKeywords: ["hyperplan"] })).toEqual(["ultrawork"])
+  })
+
+  it("#given an allowlist #when detecting #then only allowlisted arms fire", () => {
+    expect(detectKeywordTypes("ultrawork and team mode", { enabledExpansions: ["team"] })).toEqual(["team"])
+    expect(detectKeywordTypes("hyperplan ultrawork", { enabledExpansions: ["hyperplan", "ultrawork"] })).toEqual([
+      "ultrawork",
+      "hyperplan",
+    ])
+  })
+
+  it("#given a keyword inside a code block #when detecting #then nothing fires", () => {
+    expect(detectKeywordTypes("```ts\nconst team_mode = 1\n```")).toEqual([])
+    expect(detectKeywordTypes("run `hyperplan` in shell")).toEqual([])
+  })
+})
+
+describe("mode bodies and markers", () => {
+  it("#given the marker table #when resolving bodies #then every marker occurs in its own injected body", () => {
+    expect(resolveModeBody("ultrawork", "default")).toContain(MODE_MARKERS.ultrawork)
+    expect(resolveModeBody("team", "default")).toContain(MODE_MARKERS.team)
+    expect(resolveModeBody("hyperplan", "default")).toContain(MODE_MARKERS.hyperplan)
+    expect(resolveModeBody("hyperplan-ultrawork", "default")).toContain(MODE_MARKERS["hyperplan-ultrawork"])
+    // The combo banner also carries both base markers via the embedded ultrawork body.
+    expect(resolveModeBody("hyperplan-ultrawork", "gpt")).toContain(MODE_MARKERS.ultrawork)
+  })
+
+  it("#given the team body #when reading it #then it keeps its own degraded-mode instruction", () => {
+    expect(TEAM_MODE_PROMPT).toContain("team_mode.enabled")
+  })
+})
+
 
 // ---------------------------------------------------------------------------
 // Ultrawork arm (regression pin for the src/v2/ultrawork.ts behavior)
@@ -385,7 +462,134 @@ describe("think arm", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Post-compaction restoration
+// Team / hyperplan / combo arms (hook level)
+// ---------------------------------------------------------------------------
+
+describe("team and hyperplan arms", () => {
+  it("#given a team mode message #when the prompt hook runs #then the team directive is appended", async () => {
+    const harness = await createRegisteredHarness()
+    const event = promptEvent("use team mode for this")
+    await harness.prompt(event)
+    expect(event.prompt.text).toContain("use team mode for this")
+    expect(event.prompt.text).toContain("\n\n---\n\n")
+    expect(event.prompt.text).toContain(TEAM_MODE_PROMPT)
+  })
+
+  it("#given a hyperplan message #when the prompt hook runs #then the hyperplan directive is appended", async () => {
+    const harness = await createRegisteredHarness()
+    const event = promptEvent("hpp this feature")
+    await harness.prompt(event)
+    expect(event.prompt.text).toContain(HYPERPLAN_MODE_PROMPT)
+  })
+
+  it("#given a combo message #when the prompt hook runs #then only the combo banner plus ultrawork body is appended", async () => {
+    const harness = await createRegisteredHarness()
+    const event = promptEvent("hyperplan ultrawork this")
+    await harness.prompt(event)
+    expect(event.prompt.text).toContain("<hyperplan-ultrawork-mode>")
+    expect(event.prompt.text).toContain(ultraworkPromptVariants.default.content)
+    // The standalone hyperplan body is suppressed by the combo.
+    const firstHyperplanIndex = event.prompt.text.indexOf(HYPERPLAN_MODE_PROMPT)
+    expect(firstHyperplanIndex).toBe(-1)
+  })
+
+  it("#given an armed ultrawork session #when a team message arrives #then team arms independently", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("ulw start"))
+    const event = promptEvent("switch to team mode")
+    await harness.prompt(event)
+    expect(event.prompt.text).toContain(TEAM_MODE_PROMPT)
+    expect(event.prompt.text).not.toContain(ultraworkPromptVariants.default.content)
+  })
+
+  it("#given an armed team session #when another team message arrives #then the directive is not appended twice", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("team mode start"))
+    const second = promptEvent("team mode again")
+    await harness.prompt(second)
+    expect(second.prompt.text).toBe("team mode again")
+  })
+
+  it("#given disabled_keywords contains team #when a team message arrives #then the arm is gated off", async () => {
+    const harness = await createRegisteredHarness({
+      keyword_detector: { disabled_keywords: ["team"] },
+    })
+    const event = promptEvent("team mode gated")
+    await harness.prompt(event)
+    expect(event.prompt.text).toBe("team mode gated")
+  })
+
+  it("#given /stop-continuation #when a team session disarms #then team restoration stops too", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("team mode start"))
+    await harness.prompt(promptEvent("/stop-continuation"))
+    const event = contextEvent()
+    harness.context(event)
+    expect(event.system).toHaveLength(0)
+  })
+
+  it("#given a subagent session #when a team message arrives #then no directive is injected", async () => {
+    const harness = await createRegisteredHarness()
+    harness.setSession({ agent: "sisyphus", parentID: "ses_parent" })
+    const event = promptEvent("team mode as subagent")
+    await harness.prompt(event)
+    expect(event.prompt.text).toBe("team mode as subagent")
+  })
+})
+
+describe("team and hyperplan context restoration", () => {
+  it("#given an armed team session without the marker #when the context hook runs #then the team body is restored", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("team mode start"))
+    const event = contextEvent()
+    harness.context(event)
+    expect(event.system).toHaveLength(1)
+    expect(event.system[0]?.text).toContain(TEAM_MODE_PROMPT)
+  })
+
+  it("#given the team directive still in messages #when the context hook runs #then nothing is re-injected", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("team mode start"))
+    const event = contextEvent({
+      messages: [{ role: "user", content: [{ type: "text", text: TEAM_MODE_PROMPT }] }],
+    })
+    harness.context(event)
+    expect(event.system).toHaveLength(0)
+  })
+
+  it("#given an armed hyperplan session #when the context hook runs #then the hyperplan body is restored once", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("hpp start"))
+    const event = contextEvent()
+    harness.context(event)
+    expect(event.system).toHaveLength(1)
+    expect(event.system[0]?.text).toContain(HYPERPLAN_MODE_PROMPT)
+  })
+
+  it("#given a combo-armed session #when the context hook runs #then the combo body is restored once", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("hyperplan ultrawork start"))
+    const event = contextEvent()
+    harness.context(event)
+    expect(event.system).toHaveLength(1)
+    expect(event.system[0]?.text).toContain("<hyperplan-ultrawork-mode>")
+    expect(event.system[0]?.text).toContain(ultraworkPromptVariants.default.content)
+  })
+
+  it("#given a session armed with two modes #when both markers are gone #when the context hook runs #then both bodies are restored", async () => {
+    const harness = await createRegisteredHarness()
+    await harness.prompt(promptEvent("ultrawork and team mode together"))
+    const event = contextEvent()
+    harness.context(event)
+    expect(event.system).toHaveLength(2)
+    const joined = event.system.map((part) => part.text).join("\n")
+    expect(joined).toContain(ultraworkPromptVariants.default.content)
+    expect(joined).toContain(TEAM_MODE_PROMPT)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Post-compaction restoration (ultrawork)
 // ---------------------------------------------------------------------------
 
 describe("ultrawork context restoration", () => {

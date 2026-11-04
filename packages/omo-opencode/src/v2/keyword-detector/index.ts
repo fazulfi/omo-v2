@@ -1,9 +1,10 @@
 import { promises as nodeFs } from "node:fs"
 import * as nodePath from "node:path"
 import { Plugin } from "@opencode/plugin"
+import type { KeywordType } from "../../config/schema/keyword-detector"
 import { OhMyOpenCodeConfigSchema } from "../../config/schema/oh-my-opencode-config"
-import { detectThinkKeyword, DISARM_PATTERN, looksLikeSlashCommand, stripCodeBlocks, ULTRAWORK_PATTERN } from "./detection"
-import { detectUltraworkSource, getUltraworkDirective, isNonOmoAgent, ULTRAWORK_MODE_TAG } from "./modes"
+import { detectKeywordTypes, detectThinkKeyword, DISARM_PATTERN, looksLikeSlashCommand } from "./detection"
+import { detectUltraworkSource, isNonOmoAgent, MODE_MARKERS, resolveModeBody, ULTRAWORK_MODE_TAG } from "./modes"
 import { isAlreadyHighVariant } from "./think-mode"
 
 /**
@@ -28,25 +29,29 @@ import { isAlreadyHighVariant } from "./think-mode"
  *     (`explicitUltraworkSessions`) semantics we keep — the override is STICKY
  *     until disarmed: no switch-back race.
  *   V1 `system.transform` restoration     → `ctx.session.hook("context")`.
- *     Armed sessions get the directive re-appended to `event.system` when no
- *     system part carries the mode marker AND no message in the request still
- *     contains it (post-compaction restoration).
+ *     Armed sessions get each armed mode's directive re-appended to
+ *     `event.system` when no system part carries the mode marker AND no
+ *     message in the request still contains it (post-compaction restoration).
  *
- * Scope: `ultrawork` plus the `think` arm. The remaining V1 arms — team,
- * hyperplan, and the hyperplan-ultrawork combo — land on top of this shared
- * hook pair in follow-up commits on this branch.
- *
- * Think mode (V1 `hooks/think-mode/`): `think`/`ultrathink` (plus V1's
- * multilingual arms) detected in the SAME prompt hook — code-stripped and
- * slash-gated like ultrawork — then the session's reasoning variant is raised
- * to `high` via `session.switchModel` with the SAME model id/providerID
- * (never a model switch). The variant rides the session's `Model.Ref`, so it
- * survives compaction with no per-request re-application; `event.options` in
- * the context hook was rejected as the seam because `variant` is not a
- * `GenerationOptionsFields` key and would land in untyped provider options.
- * Unlike the directive arms, think is not agent-gated (V1 parity: the V1
- * think hook had no agent/subagent gating) and needs no disarm — the raise is
- * idempotent and "already high+" sessions are left alone.
+ * Arms (V1 keyword types, all four ported):
+ *   - `ultrawork`/`ulw`  — model-routed directive, `agents.<id>.ultrawork`
+ *     model override, sticky until `/stop-continuation`.
+ *   - `team mode`        — team-mode directive body from prompts-core. The
+ *     body keeps its own degraded-mode instruction (v2 has no `team_*` tools;
+ *     the body tells the user to enable `team_mode.enabled`).
+ *   - `hyperplan`/`hpp`  — adversarial-planning directive body.
+ *   - `hyperplan-ultrawork` — strict-adjacency combo banner embedding the
+ *     routed ultrawork body; requires BOTH base keywords enabled (V1 rule:
+ *     disabling either base disables the combo) and suppresses the standalone
+ *     arms in the same message.
+ * Plus the V1 think arm: `think`/`ultrathink` (and V1's multilingual arms)
+ * raise the session's reasoning variant to `high` via `session.switchModel`
+ * with the SAME model id/providerID — never a model switch. The variant rides
+ * the session's `Model.Ref`, so it survives compaction with no per-request
+ * re-application; the context-hook `event.options` seam was rejected because
+ * `variant` is not a `GenerationOptionsFields` key and would land in untyped
+ * provider options. Think is not agent-gated (V1 parity) and needs no disarm —
+ * the raise is idempotent and "already high+" sessions are left alone.
  */
 
 export type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
@@ -64,7 +69,7 @@ interface SessionInfo {
 }
 
 interface ArmedSession {
-  readonly source: ReturnType<typeof detectUltraworkSource>
+  readonly modes: Set<KeywordType>
   readonly switchedTo?: string
 }
 
@@ -173,68 +178,75 @@ export async function registerKeywordDetector(ctx: PluginContext): Promise<() =>
     if (looksLikeSlashCommand(text)) return
 
     const config = await loadOmoConfig(ctx.location?.directory)
-    const stripped = stripCodeBlocks(text)
+
+    let sessionInfo: SessionInfo | undefined
+    let sessionInfoLoaded = false
+    const getSessionInfo = async (): Promise<SessionInfo | undefined> => {
+      if (!sessionInfoLoaded) {
+        sessionInfoLoaded = true
+        try {
+          sessionInfo = await sessionGet?.({ id: sessionID })
+        } catch {
+          // Session lookup is best-effort; arming proceeds without agent gating.
+        }
+      }
+      return sessionInfo
+    }
 
     // Think arm first: it is independent of directive arming and, by V1
     // parity, not agent-gated — a subagent or builder session still gets the
     // variant raise when the user's message asks for maximum reasoning.
-    if (detectThinkKeyword(stripped)) {
-      let sessionInfo: SessionInfo | undefined
-      let loaded = false
-      const getSessionInfo = async (): Promise<SessionInfo | undefined> => {
-        if (!loaded) {
-          loaded = true
-          try {
-            sessionInfo = await sessionGet?.({ id: sessionID })
-          } catch {
-            // Session lookup is best-effort; the raise is skipped.
-          }
-        }
-        return sessionInfo
-      }
+    if (detectThinkKeyword(text)) {
       await raiseThinkVariant(sessionID, getSessionInfo)
     }
 
-    if (armed.has(sessionID)) return
-    if (config?.keyword_detector?.disabled_keywords?.includes("ultrawork")) return
-    const allowlist = config?.keyword_detector?.enabled_expansions
-    if (allowlist && !allowlist.includes("ultrawork")) return
-
-    const detected = ULTRAWORK_PATTERN.test(stripped)
-    const autoArm = config?.default_mode?.ultrawork === true
-    if (!detected && !autoArm) return
-
-    let agentID: string | undefined
-    let parentID: string | undefined
-    try {
-      const session = await sessionGet?.({ id: sessionID })
-      agentID = session?.agent
-      parentID = session?.parentID
-    } catch {
-      // Session lookup is best-effort; arming proceeds without agent gating.
+    const state = armed.get(sessionID)
+    let detectedTypes = detectKeywordTypes(text, {
+      disabledKeywords: config?.keyword_detector?.disabled_keywords,
+      enabledExpansions: config?.keyword_detector?.enabled_expansions,
+    })
+    if (config?.default_mode?.ultrawork === true && !detectedTypes.includes("ultrawork")) {
+      detectedTypes = ["ultrawork", ...detectedTypes]
     }
-    if (parentID || isNonOmoAgent(agentID)) return
+    const freshTypes = state ? detectedTypes.filter((type) => !state.modes.has(type)) : detectedTypes
+    if (freshTypes.length === 0) return
 
-    const override = resolveModelOverride(config, agentID)
+    const session = await getSessionInfo()
+    const agentID = session?.agent
+    if (session?.parentID || isNonOmoAgent(agentID)) return
+
+    // The ultrawork model override applies whenever a fresh ultrawork-flavored
+    // arm (ultrawork or the combo, which embeds the ultrawork body) fires.
     let switchedTo: string | undefined
-    if (override && override.providerID && override.modelID && typeof switchModel === "function") {
-      try {
-        await Promise.race([
-          switchModel({ sessionID, model: { id: override.modelID, providerID: override.providerID, ...(override.variant ? { variant: override.variant } : {}) } }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
-        ])
-        switchedTo = `${override.providerID}/${override.modelID}`
-        console.error(`[OMC] ultrawork: model switched to ${switchedTo}${override.variant ? ` (variant ${override.variant})` : ""}`)
-      } catch (error) {
-        console.error("[OMC] ultrawork: switchModel failed; continuing with the session model", error)
+    let overrideModelID: string | undefined
+    if (
+      (freshTypes.includes("ultrawork") || freshTypes.includes("hyperplan-ultrawork")) &&
+      typeof switchModel === "function"
+    ) {
+      const override = resolveModelOverride(config, agentID)
+      if (override && override.providerID && override.modelID) {
+        overrideModelID = override.modelID
+        try {
+          await Promise.race([
+            switchModel({ sessionID, model: { id: override.modelID, providerID: override.providerID, ...(override.variant ? { variant: override.variant } : {}) } }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 10_000)),
+          ])
+          switchedTo = `${override.providerID}/${override.modelID}`
+          console.error(`[OMC] ultrawork: model switched to ${switchedTo}${override.variant ? ` (variant ${override.variant})` : ""}`)
+        } catch (error) {
+          console.error("[OMC] ultrawork: switchModel failed; continuing with the session model", error)
+        }
       }
     }
 
-    const source = detectUltraworkSource(agentID, override?.modelID ?? switchedTo)
-    const directive = getUltraworkDirective(source)
-    event.prompt.text = `${text}\n\n---\n\n${directive}`
-    trackArmed(sessionID, { source, switchedTo })
-    console.error(`[OMC] ultrawork: armed (source=${source}, agent=${agentID ?? "unknown"})`)
+    const source = detectUltraworkSource(agentID, overrideModelID ?? switchedTo)
+    const bodies = freshTypes.map((type) => resolveModeBody(type, source))
+    event.prompt.text = `${text}\n\n---\n\n${bodies.join("\n\n")}`
+
+    const modes = new Set(state?.modes ?? [])
+    for (const type of freshTypes) modes.add(type)
+    trackArmed(sessionID, { modes, switchedTo: switchedTo ?? state?.switchedTo })
+    console.error(`[OMC] keyword-detector: armed (modes=[${[...modes].join(", ")}], source=${source}, agent=${agentID ?? "unknown"})`)
   })
 
   const contextHook = await ctx.session.hook("context", (event) => {
@@ -242,20 +254,24 @@ export async function registerKeywordDetector(ctx: PluginContext): Promise<() =>
     const state = armed.get(sessionID)
     if (!state) return
 
-    const markerPresent =
-      event.system.some((part) => typeof part.text === "string" && part.text.includes(ULTRAWORK_MODE_TAG)) ||
-      event.messages.some((message) =>
-        JSON.stringify(message).includes(ULTRAWORK_MODE_TAG),
-      )
-    if (markerPresent) return
-
     // Re-route with the live request model (the switch may not have applied).
     const liveModelID = (event.model as { id?: string } | undefined)?.id
     const source = detectUltraworkSource(event.agent as string | undefined, liveModelID ?? state.switchedTo)
-    event.system.push({
-      type: "text",
-      text: `${ULTRAWORK_MODE_TAG}active</ultrawork-mode>\n\n${getUltraworkDirective(source)}`,
-    })
+    const serializedMessages = event.messages.map((message) => JSON.stringify(message))
+
+    for (const type of state.modes) {
+      const marker = MODE_MARKERS[type]
+      const markerPresent =
+        event.system.some((part) => typeof part.text === "string" && part.text.includes(marker)) ||
+        serializedMessages.some((blob) => blob.includes(marker))
+      if (markerPresent) continue
+
+      const body = resolveModeBody(type, source)
+      // The ultrawork restoration keeps the V1-style "active" wrapper; the
+      // other bodies already open with their own mode markers.
+      const restoration = type === "ultrawork" ? `${ULTRAWORK_MODE_TAG}active</ultrawork-mode>\n\n${body}` : body
+      event.system.push({ type: "text", text: restoration })
+    }
   })
 
   return async () => {

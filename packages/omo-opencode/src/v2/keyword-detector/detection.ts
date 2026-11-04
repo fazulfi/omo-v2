@@ -1,3 +1,5 @@
+import type { KeywordType } from "../../config/schema/keyword-detector"
+
 /**
  * [OMC] v2 keyword detection primitives.
  *
@@ -17,6 +19,21 @@ export const DISARM_PATTERN = /^\s*\/stop-continuation\b/
 
 export const ULTRAWORK_PATTERN = /\b(?:ultrawork|ulw)\b/i
 
+/** Team mode: `team mode`, `team-mode`, `team_mode`, `teammode` (case-insensitive). */
+export const TEAM_PATTERN = /\bteam[\s_-]?mode\b/i
+
+/**
+ * Hyperplan: `hyperplan` or the `hpp` shorthand. The shorthand carries a
+ * negative lookbehind so the C++ header extension `.hpp` (e.g.
+ * `src/buffer.hpp`) does not falsely trigger — a dot would otherwise satisfy
+ * `\b` because it is a non-word character (upstream #4215).
+ */
+export const HYPERPLAN_PATTERN = /\bhyperplan\b|(?<![\w.])hpp\b/i
+
+/** Hyperplan-ultrawork combo: strict adjacency, both word orders (V1 parity). */
+export const HYPERPLAN_ULTRAWORK_PATTERN =
+  /\b(?:hpp|hyperplan)\s+(?:ulw|ultrawork)\b|\b(?:ulw|ultrawork)\s+(?:hpp|hyperplan)\b/i
+
 export function stripCodeBlocks(text: string): string {
   return text.replace(CODE_BLOCK_PATTERN, " ").replace(INLINE_CODE_PATTERN, " ")
 }
@@ -24,6 +41,61 @@ export function stripCodeBlocks(text: string): string {
 /** A slash command is a user command, not an intent signal (V1 parity). */
 export function looksLikeSlashCommand(text: string): boolean {
   return SLASH_COMMAND_LEAD_PATTERN.test(text)
+}
+
+// ---------------------------------------------------------------------------
+// Directive-arm detection (V1 `hooks/keyword-detector/detector.ts` parity)
+// ---------------------------------------------------------------------------
+
+interface KeywordDetector {
+  readonly type: KeywordType
+  readonly pattern: RegExp
+}
+
+const KEYWORD_DETECTORS: readonly KeywordDetector[] = [
+  { type: "ultrawork", pattern: ULTRAWORK_PATTERN },
+  { type: "team", pattern: TEAM_PATTERN },
+  { type: "hyperplan", pattern: HYPERPLAN_PATTERN },
+  { type: "hyperplan-ultrawork", pattern: HYPERPLAN_ULTRAWORK_PATTERN },
+]
+
+export interface KeywordGates {
+  /** Keyword types that never fire (`keyword_detector.disabled_keywords`). */
+  readonly disabledKeywords?: readonly KeywordType[]
+  /** When set, only these keyword types fire (`keyword_detector.enabled_expansions`). */
+  readonly enabledExpansions?: readonly KeywordType[]
+}
+
+/**
+ * Detect the armed keyword types for one message (V1 `detectKeywordsWithType`
+ * parity, with the V1 `hook.ts` combo suppression folded in):
+ *
+ * - code blocks and inline code are stripped before matching;
+ * - the combo requires BOTH base keywords enabled: disabling `ultrawork` OR
+ *   `hyperplan` disables `hyperplan-ultrawork` too;
+ * - an allowlist filters per type;
+ * - when the combo fires, the standalone `ultrawork`/`hyperplan` matches from
+ *   the same message are suppressed so the banners are not doubled.
+ */
+export function detectKeywordTypes(text: string, gates: KeywordGates = {}): KeywordType[] {
+  const stripped = stripCodeBlocks(text)
+  const disabled = new Set<KeywordType>(gates.disabledKeywords ?? [])
+  if (disabled.has("ultrawork") || disabled.has("hyperplan")) {
+    disabled.add("hyperplan-ultrawork")
+  }
+  const allowlist = gates.enabledExpansions ? new Set<KeywordType>(gates.enabledExpansions) : null
+
+  const matched = KEYWORD_DETECTORS.filter(({ type, pattern }) => {
+    if (!pattern.test(stripped)) return false
+    if (allowlist && !allowlist.has(type)) return false
+    if (disabled.has(type)) return false
+    return true
+  }).map(({ type }) => type)
+
+  if (matched.includes("hyperplan-ultrawork")) {
+    return matched.filter((type) => type !== "ultrawork" && type !== "hyperplan")
+  }
+  return matched
 }
 
 // ---------------------------------------------------------------------------
