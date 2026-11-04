@@ -1,5 +1,7 @@
-import { Agent, Plugin } from "@opencode/plugin"
+import { Agent, Model, Plugin, Provider } from "@opencode/plugin"
 import { z } from "zod"
+import { buildRegisteredAgents } from "./agent-overrides"
+import { loadOmoConfig } from "./config"
 
 /**
  * [OMC] v2 agents port (task 12).
@@ -46,21 +48,29 @@ type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
 // Types
 // ---------------------------------------------------------------------------
 
-type AgentMode = "primary" | "subagent" | "all"
+export type AgentMode = "primary" | "subagent" | "all"
 
-interface PermissionRule {
+export interface PermissionRule {
   readonly action: string
   readonly resource: string
   readonly effect: "allow" | "deny" | "ask"
 }
 
-interface AgentDefinition {
+/** Model pin for an agent (v2 `Agent.Info.model`); unset = inherit the session model. */
+export interface AgentModelRef {
+  readonly providerID: string
+  readonly modelID: string
+  readonly variant?: string
+}
+
+export interface AgentDefinition {
   readonly id: string
   readonly name: string
   readonly description: string
   readonly mode: AgentMode
   readonly system: string
   readonly color?: string
+  readonly model?: AgentModelRef
   readonly permissions?: readonly PermissionRule[]
 }
 
@@ -1269,13 +1279,49 @@ const OMC_AGENTS: readonly AgentDefinition[] = [
 /**
  * Registers the OMC builtin agents into the V2 agent catalog via
  * `ctx.agent.transform(editor => editor.update(id, fn))` (upsert semantics),
+ * applying `omo.json` `agents.<id>` overrides first (`./agent-overrides.ts`),
  * then exposes a diagnostic RPC (`omo.agents`) for runtime proof.
  *
  * Returns a cleanup function that disposes the RPC registration.
  */
+
+/**
+ * Probes the available providers (`ctx.provider.list()` lists providers that
+ * are enabled or connected — verified against opencode core `Provider.snapshot`).
+ * Falls back to an empty set so agent models stay unset (inherit) on failure.
+ */
+async function probeAvailableProviders(ctx: PluginContext): Promise<ReadonlySet<string>> {
+  try {
+    const out = await ctx.provider.list()
+    return new Set(out.data.map((provider) => provider.id))
+  } catch (error) {
+    console.error("[OMC] agents: provider.list probe failed; leaving agent models unset", error)
+    return new Set()
+  }
+}
+
 export async function registerAgents(ctx: PluginContext): Promise<() => Promise<void>> {
+  const baseDir = ctx.location?.directory ?? process.cwd()
+  const config = await loadOmoConfig(ctx.location?.directory)
+  const connectedProviders = await probeAvailableProviders(ctx)
+  const plan = buildRegisteredAgents({
+    inventory: OMC_AGENTS,
+    config,
+    connectedProviders,
+    baseDir,
+  })
+
+  if (plan.disabled.length > 0) {
+    console.error(`[OMC] agents: disabled by omo.json: ${[...plan.disabled].sort().join(", ")}`)
+  }
+  if (plan.unapplied.length > 0) {
+    console.error(
+      `[OMC] agents: override keys with no matching v2 agent (ignored): ${[...plan.unapplied].sort().join(", ")}`,
+    )
+  }
+
   await ctx.agent.transform((editor) => {
-    for (const def of OMC_AGENTS) {
+    for (const def of plan.agents) {
       editor.update(def.id, (agent) => {
         agent.name = Agent.Name.make(def.name)
         agent.description = def.description
@@ -1284,6 +1330,13 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
         agent.hidden = false
         if (def.color !== undefined) {
           agent.color = def.color
+        }
+        if (def.model !== undefined) {
+          agent.model = {
+            id: Model.ID.make(def.model.modelID),
+            providerID: Provider.ID.make(def.model.providerID),
+            ...(def.model.variant !== undefined ? { variant: Model.VariantID.make(def.model.variant) } : {}),
+          }
         }
         // Only override permissions when the definition restricts something. An
         // unconditional `[...(def.permissions ?? [])]` would replace the default
@@ -1306,7 +1359,10 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
         })
       }
     }
-    editor.default("sisyphus")
+    // sisyphus stays the default unless the user disabled it via omo.json.
+    if (!plan.disabled.includes("sisyphus")) {
+      editor.default("sisyphus")
+    }
   })
 
   const rpc = await ctx.rpc.register(
@@ -1338,6 +1394,14 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
                 mode: z.enum(["primary", "subagent", "all"]),
                 description: z.string(),
                 system: z.string(),
+                color: z.string().optional(),
+                model: z
+                  .object({
+                    providerID: z.string(),
+                    id: z.string(),
+                    variant: z.string().optional(),
+                  })
+                  .optional(),
               })
               .optional(),
             error: z.string().optional(),
@@ -1380,6 +1444,16 @@ export async function registerAgents(ctx: PluginContext): Promise<() => Promise<
             mode: found.mode,
             description: found.description ?? "",
             system: found.system,
+            ...(found.color !== undefined ? { color: found.color } : {}),
+            ...(found.model !== undefined
+              ? {
+                  model: {
+                    providerID: found.model.providerID,
+                    id: found.model.id,
+                    ...(found.model.variant !== undefined ? { variant: found.model.variant } : {}),
+                  },
+                }
+              : {}),
           },
         }
       },
