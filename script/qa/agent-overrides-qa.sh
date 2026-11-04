@@ -105,7 +105,12 @@ echo "real DB rows BEFORE: session_v2=$BEFORE_SESSIONS session_message=$BEFORE_M
 PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')"
 SERVER_URL="http://127.0.0.1:$PORT"
 
-( cd "$QA_ROOT/proj" && OPENCODE_SERVER_PASSWORD="$PASSWORD" \
+# `env -u` sanitizes the harness session's own OpenCode env (OPENCODE_PASSWORD
+# of the parent session takes precedence over OPENCODE_SERVER_PASSWORD in the
+# spawned server and would reject this QA's credentials).
+( cd "$QA_ROOT/proj" && env -u OPENCODE -u OPENCODE_PASSWORD -u OPENCODE_SESSION_ID \
+    -u OPENCODE_CONFIG_CONTENT -u AI_AGENT -u OPENCODE_TERMINAL \
+    OPENCODE_SERVER_PASSWORD="$PASSWORD" \
     opencode serve --port "$PORT" --hostname 127.0.0.1 >"$QA_ROOT/serve.log" 2>&1 & echo $! >"$QA_ROOT/pid" )
 SERVER_PID="$(cat "$QA_ROOT/pid" 2>/dev/null)"
 
@@ -115,8 +120,10 @@ for _ in $(seq 1 60); do
 done
 
 rpc() {
+  local body="${3:-}"
+  [ -z "$body" ] && body='{"input":{}}'
   curl -s --max-time 20 -u "opencode:$PASSWORD" -X POST "$SERVER_URL/api/rpc/$1/$2" \
-    -H 'Content-Type: application/json' -d "${3:-{\"input\":{}}}"
+    -H 'Content-Type: application/json' -d "$body"
 }
 
 # The plugin registers asynchronously; poll until the catalog answers.
