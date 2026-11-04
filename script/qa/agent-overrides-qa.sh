@@ -32,10 +32,26 @@ case "$MODE" in
   *) echo "FAIL: MODE must be 'green' or 'red' (got '$MODE')" >&2; exit 1 ;;
 esac
 
+sweep_serve_by_cwd() {
+  # `opencode serve` detaches from the subshell PID the trap recorded, so the
+  # direct kill misses it. Sweep by /proc cwd: only processes whose working
+  # directory is inside this run's sandbox belong to this run.
+  local signal="${1:--TERM}"
+  for pid in $(pgrep -f "opencode serve --port" 2>/dev/null); do
+    local cwd
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
+    case "$cwd" in
+      "$QA_ROOT"*) kill "-s" "$signal" "$pid" 2>/dev/null ;;
+    esac
+  done
+}
+
 cleanup() {
   [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null
+  sweep_serve_by_cwd
   sleep 0.3
   [ -n "${SERVER_PID:-}" ] && kill -9 "$SERVER_PID" 2>/dev/null
+  sweep_serve_by_cwd KILL
   rm -rf "$QA_ROOT"
 }
 trap cleanup EXIT
