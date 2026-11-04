@@ -46,11 +46,13 @@
 | 24 | Companion integration (3 plugin bersamaan) | Smoke gabungan di atas: status + agents + tools + dcp status + MCP connected dalam SATU service | **PASS** | task-16/task-16 JSON + task-19 semua log |
 | 25 | Static parity gates (pendukung, bukan pengganti) | gate-v1-imports 349→0; gate-deps PASS; ': any' port surface 0 (475 non-port justified task-18); tsgo strict exit 0 | **PASS** | task-18/{after-gate-*.log,task-18 JSON} |
 | 26 | Ultrawork (ulw) keyword mode | `session.hook("prompt")` mendeteksi `ultrawork|ulw` (code-stripped, slash-gated) → append directive prompts-core ke `prompt.text` + `session.switchModel` per `agents.<id>.ultrawork` (sticky sampai `/stop-continuation`); `session.hook("context")` re-inject pasca-compaction via `event.system` | **PASS\*** (registrasi + build + tsgo terbukti; firing hook butuh sesi model live — pola sama dgn baris 6) | `packages/omo-opencode/src/v2/ultrawork.ts`; dist/index.js (registerUltrawork + 5 varian directive ter-bundle); task-19 pola smoke |
+| 27 | Agent overrides (omo.json `agents.<id>`) | `registerAgents` membaca omo.json (loader mtime-cached `src/v2/config.ts`), menerapkan `displayName`/`description`/`mode`/`color`, `prompt` (termasuk `file://` absolut/relatif/`~/` + gerbang allowed-paths) + `prompt_append`, `tools` → permission rules (allow/deny), `disable` → agent tidak diregistrasi; model: override `"provider/model[#variant]"` menang, else rung pertama `AGENT_MODEL_REQUIREMENTS` yang providernya tersedia (`ctx.provider.list()`); `sisyphus` tetap default kecuali di-disable. Dibuktikan RED (build pra-perubahan mengabaikan override, 4/4) vs GREEN (8/8) pada katalog live via RPC `omo.agents list/get`; metis ter-resolve live ke `opencode/claude-fable-5-1` (rung 1). | **PASS\*** (katalog live terbukti penuh; jalur model-backed sesi live = pasca-cutover, pola baris 10) | `20261104-v2-agent-overrides/` (RED+GREEN log, QA-SUMMARY.md); `packages/omo-opencode/src/v2/{config,agent-overrides}.ts`; `script/qa/agent-overrides-qa.sh` |
 
 Inventory coverage: seluruh fitur owner-used dari task-5 inventory (plugin load, tools/hooks,
 client/session/event, agents/subagents, background/continuation/todos, MCP-inject,
 config/installer, TUI, DCP, tokenscope) terwakili baris 1–25. Entri CLI `omo` = thin wrapper
 omo-native TANPA `@opencode-ai` → di luar port scope (task-5 verdict), bukan bagian matrix.
+Baris 26–27 ditambahkan pasca-task-19 (ultrawork, agent overrides) dengan metode bukti yang sama.
 
 ## Limitasi terdokumentasi (bukan pengecualian diam-diam)
 
@@ -94,3 +96,7 @@ dan TIDAK mengecualikan fitur apa pun tanpa dokumentasi.
 ## Verdict
 
 **24/24 fitur PASS (19 PASS penuh + 5 PASS\* dengan limitasi model/TTY terdokumentasi) — 100% matrix PASS.**
+
+Pasca-task-19: baris 26 (ultrawork) dan 27 (agent overrides) ditambahkan dengan pola bukti
+RED/GREEN pada harness terisolasi; keduanya **PASS\*** (bagian model-backed menunggu sesi
+live pasca-cutover, konsisten dengan klasifikasi di atas).

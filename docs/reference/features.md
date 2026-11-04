@@ -47,6 +47,33 @@ Ask @explore for the policy on this feature
 
 The OpenCode edition's agent roster, tab-cycling order, and agent-specific hooks are documented separately. See [OpenCode edition configuration (legacy)](./opencode-config.md).
 
+### Overriding Agents via omo.json
+
+In the OpenCode v2 port, `agents.<id>` entries in a project-root `omo.json` are applied to the OMC agent catalog at plugin startup:
+
+```jsonc
+{
+  "agents": {
+    "oracle": {
+      "displayName": "Consultant",
+      "description": "custom description",
+      "model": "zai-coding-plan/glm-5.2#high",
+      "prompt_append": "file://./prompts/oracle-extra.md"
+    },
+    "atlas": { "disable": true }
+  }
+}
+```
+
+- `displayName`, `description`, `mode`, `color` replace the built-in identity fields.
+- `prompt` replaces the system prompt; `prompt_append` appends after it. Both accept `file://` sources (absolute, relative to the project root, or `~/`, restricted to the project and `~/.config/opencode`, `~/.config/oh-my-openagent`, `~/.omo`, `~/.opencode`).
+- `tools` maps tool names to `true` (allow) / `false` (deny) and is appended after the agent's own permission rules, so a deny wins over an earlier allow.
+- `disable: true` removes the agent from the catalog (`sisyphus` remains the default agent unless you disable it).
+- Model resolution: a `model` string in `"provider/model[#variant]"` format wins (the variant uses the reasoning vocabulary; `none` normalizes to `off`). Without one, the first model-chain rung whose provider is available is pinned; when no rung matches, the agent inherits the session model.
+- Override keys that do not match a v2 agent are ignored with a log line.
+
+Fields with no agent-catalog equivalent in the v2 surface (category inheritance, `models`/`fallback_models` chains, tuning such as `temperature`/`top_p`/`maxTokens`/`thinking`) and the root `disabled_agents` key are not consumed by the v2 port.
+
 ### Instruction Files vs Enforcement
 
 `AGENTS.md` files are instruction context. They tell agents how to work in a
