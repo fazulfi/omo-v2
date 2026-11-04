@@ -1,8 +1,6 @@
-import { promises as nodeFs } from "node:fs"
-import * as nodePath from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { ultraworkPromptVariants } from "@oh-my-opencode/prompts-core"
-import { OhMyOpenCodeConfigSchema } from "../config/schema/oh-my-opencode-config"
+import { loadOmoConfig, type OmoConfig } from "./config"
 
 /**
  * [OMC] v2 ultrawork port (restores the V1 keyword-detector `ultrawork` arm).
@@ -87,33 +85,8 @@ function isNonOmoAgent(agentName?: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Config (lazy omo.json read, mtime-cached)
+// Config: shared mtime-cached loader → ./config.ts (extracted 2026-11-04)
 // ---------------------------------------------------------------------------
-
-type OmoConfig = ReturnType<typeof OhMyOpenCodeConfigSchema.parse>
-
-const configCache = new Map<string, { mtimeMs: number; config: OmoConfig | null }>()
-
-async function loadOmoConfig(directory: string | undefined): Promise<OmoConfig | null> {
-  const base = directory ?? process.cwd()
-  const file = nodePath.join(base, "omo.json")
-  try {
-    const stat = await nodeFs.stat(file)
-    const cached = configCache.get(file)
-    if (cached && cached.mtimeMs === stat.mtimeMs) return cached.config
-    const raw = JSON.parse(await nodeFs.readFile(file, "utf8"))
-    const parsed = OhMyOpenCodeConfigSchema.safeParse(raw)
-    const config = parsed.success ? parsed.data : null
-    if (!parsed.success) {
-      console.error("[OMC] ultrawork: omo.json failed schema validation; ignoring file", parsed.error.message)
-    }
-    if (configCache.size > 8) configCache.clear()
-    configCache.set(file, { mtimeMs: stat.mtimeMs, config })
-    return config
-  } catch {
-    return null
-  }
-}
 
 interface ResolvedModelOverride {
   providerID: string
