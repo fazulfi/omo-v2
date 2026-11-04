@@ -5,7 +5,7 @@ import { registerMcp } from "./mcp"
 import { registerOrchestration } from "./orchestration"
 import { registerSkills } from "./skills"
 import { registerToolsAndHooks } from "./tools"
-import { registerUltrawork } from "./ultrawork"
+import { registerKeywordDetector } from "./keyword-detector"
 
 /**
  * [OMC] v2 entry point — full server-side wiring (tasks 9-15).
@@ -69,9 +69,9 @@ export const omoV2Plugin = Plugin.define({
     }
 
     try {
-      cleanups.push(await registerUltrawork(ctx))
+      cleanups.push(await registerKeywordDetector(ctx))
     } catch (error) {
-      console.error("[OMC] v2 registerUltrawork failed:", error)
+      console.error("[OMC] v2 registerKeywordDetector failed:", error)
     }
 
     return async () => {

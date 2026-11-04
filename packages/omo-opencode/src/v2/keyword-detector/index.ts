@@ -1,11 +1,12 @@
 import { promises as nodeFs } from "node:fs"
 import * as nodePath from "node:path"
 import { Plugin } from "@opencode/plugin"
-import { ultraworkPromptVariants } from "@oh-my-opencode/prompts-core"
-import { OhMyOpenCodeConfigSchema } from "../config/schema/oh-my-opencode-config"
+import { OhMyOpenCodeConfigSchema } from "../../config/schema/oh-my-opencode-config"
+import { DISARM_PATTERN, looksLikeSlashCommand, stripCodeBlocks, ULTRAWORK_PATTERN } from "./detection"
+import { detectUltraworkSource, getUltraworkDirective, isNonOmoAgent, ULTRAWORK_MODE_TAG } from "./modes"
 
 /**
- * [OMC] v2 ultrawork port (restores the V1 keyword-detector `ultrawork` arm).
+ * [OMC] v2 keyword detector (restores the V1 `hooks/keyword-detector` arms).
  *
  * V1 wiring (deleted in d6096afe2, task 18) used `chat.message` to append the
  * model-routed directive to the user message, `ultrawork-model-override.ts` to
@@ -27,63 +28,20 @@ import { OhMyOpenCodeConfigSchema } from "../config/schema/oh-my-opencode-config
  *     until disarmed: no switch-back race.
  *   V1 `system.transform` restoration     → `ctx.session.hook("context")`.
  *     Armed sessions get the directive re-appended to `event.system` when no
- *     system part carries the marker AND no message in the request still
+ *     system part carries the mode marker AND no message in the request still
  *     contains it (post-compaction restoration).
  *
- * Deliberate scope: `ultrawork` only. The V1 team/hyperplan keyword expansions
- * stay unported; their config schemas remain at HEAD for a follow-up.
+ * Scope: `ultrawork` only in this refactor (the module this file replaces,
+ * `src/v2/ultrawork.ts`, was identical in behavior). The remaining V1 arms —
+ * think, team, hyperplan, and the hyperplan-ultrawork combo — land on top of
+ * this shared hook pair in follow-up commits on this branch.
  */
 
-type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
-
-type UltraworkSource = keyof typeof ultraworkPromptVariants
+export type PluginContext = Parameters<Parameters<typeof Plugin.define>[0]["setup"]>[0]
 
 interface ArmedSession {
-  readonly source: UltraworkSource
+  readonly source: ReturnType<typeof detectUltraworkSource>
   readonly switchedTo?: string
-}
-
-// ---------------------------------------------------------------------------
-// Detection (V1 `hooks/keyword-detector/{constants,detector}.ts` parity)
-// ---------------------------------------------------------------------------
-
-const ULTRAWORK_PATTERN = /\b(?:ultrawork|ulw)\b/i
-const CODE_BLOCK_PATTERN = /```[\s\S]*?```/g
-const INLINE_CODE_PATTERN = /`[^`]+`/g
-const SLASH_COMMAND_LEAD_PATTERN = /^\s*\/[a-zA-Z][\w-]*(?:\s|$)/
-const DISARM_PATTERN = /^\s*\/stop-continuation\b/
-const ULTRAWORK_MODE_TAG = "<ultrawork-mode>"
-
-function stripCodeBlocks(text: string): string {
-  return text.replace(CODE_BLOCK_PATTERN, " ").replace(INLINE_CODE_PATTERN, " ")
-}
-
-function looksLikeSlashCommand(text: string): boolean {
-  return SLASH_COMMAND_LEAD_PATTERN.test(text)
-}
-
-/**
- * Model/agent routing (V1 `ultrawork/source-detector.ts` parity). The model
- * helpers (`isGptModel`/`isGeminiModel`/`isGlmModel` from the deleted
- * `src/agents/types.ts`) are inlined as conservative substring checks.
- */
-function detectUltraworkSource(agentName?: string, modelID?: string): UltraworkSource {
-  const agent = agentName?.toLowerCase() ?? ""
-  if (agent.includes("prometheus") || agent.includes("planner") || /\bplan\b/.test(agent.replace(/[_-]+/g, " "))) {
-    return "planner"
-  }
-  const model = modelID?.toLowerCase() ?? ""
-  if (/gpt|codex/.test(model)) return "gpt"
-  if (model.includes("gemini")) return "gemini"
-  if (model.includes("glm")) return "glm"
-  return "default"
-}
-
-/** Non-OMO agents (host built-ins) never receive keyword injection (V1 parity). */
-function isNonOmoAgent(agentName?: string): boolean {
-  if (!agentName) return false
-  const lower = agentName.toLowerCase()
-  return lower.includes("builder") || lower === "plan" || lower === "general"
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +63,7 @@ async function loadOmoConfig(directory: string | undefined): Promise<OmoConfig |
     const parsed = OhMyOpenCodeConfigSchema.safeParse(raw)
     const config = parsed.success ? parsed.data : null
     if (!parsed.success) {
-      console.error("[OMC] ultrawork: omo.json failed schema validation; ignoring file", parsed.error.message)
+      console.error("[OMC] keyword-detector: omo.json failed schema validation; ignoring file", parsed.error.message)
     }
     if (configCache.size > 8) configCache.clear()
     configCache.set(file, { mtimeMs: stat.mtimeMs, config })
@@ -138,7 +96,7 @@ function resolveModelOverride(config: OmoConfig | null, agentID?: string): Resol
 
 const MAX_TRACKED_SESSIONS = 1024
 
-export async function registerUltrawork(ctx: PluginContext): Promise<() => Promise<void>> {
+export async function registerKeywordDetector(ctx: PluginContext): Promise<() => Promise<void>> {
   const armed = new Map<string, ArmedSession>()
 
   function trackArmed(sessionID: string, entry: ArmedSession) {
@@ -158,7 +116,7 @@ export async function registerUltrawork(ctx: PluginContext): Promise<() => Promi
     get?: (input: { id: string }) => Promise<{ agent?: string; parentID?: string }>
   }).get
 
-  await ctx.session.hook("prompt", async (event) => {
+  const promptHook = await ctx.session.hook("prompt", async (event) => {
     const sessionID = event.sessionID as string
     const text = event.prompt?.text ?? ""
 
@@ -204,13 +162,13 @@ export async function registerUltrawork(ctx: PluginContext): Promise<() => Promi
     }
 
     const source = detectUltraworkSource(agentID, override?.modelID ?? switchedTo)
-    const directive = ultraworkPromptVariants[source].content
+    const directive = getUltraworkDirective(source)
     event.prompt.text = `${text}\n\n---\n\n${directive}`
     trackArmed(sessionID, { source, switchedTo })
     console.error(`[OMC] ultrawork: armed (source=${source}, agent=${agentID ?? "unknown"})`)
   })
 
-  await ctx.session.hook("context", (event) => {
+  const contextHook = await ctx.session.hook("context", (event) => {
     const sessionID = event.sessionID as string
     const state = armed.get(sessionID)
     if (!state) return
@@ -227,11 +185,13 @@ export async function registerUltrawork(ctx: PluginContext): Promise<() => Promi
     const source = detectUltraworkSource(event.agent as string | undefined, liveModelID ?? state.switchedTo)
     event.system.push({
       type: "text",
-      text: `${ULTRAWORK_MODE_TAG}active</ultrawork-mode>\n\n${ultraworkPromptVariants[source].content}`,
+      text: `${ULTRAWORK_MODE_TAG}active</ultrawork-mode>\n\n${getUltraworkDirective(source)}`,
     })
   })
 
   return async () => {
+    await promptHook.dispose()
+    await contextHook.dispose()
     armed.clear()
   }
 }
