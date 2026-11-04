@@ -45,7 +45,9 @@
 | 23 | Tokenscope (PR #50) | Load di V2 (v2.0.0 build); tool tokenscope terdaftar di registry gabungan; e2e PR 2/2 pass (tool register + execute) | **PASS\*** (metrik token real butuh sesi model — lihat Limitasi) | task-19/02-tools-list.log; task-8 (e2e); task-16 |
 | 24 | Companion integration (3 plugin bersamaan) | Smoke gabungan di atas: status + agents + tools + dcp status + MCP connected dalam SATU service | **PASS** | task-16/task-16 JSON + task-19 semua log |
 | 25 | Static parity gates (pendukung, bukan pengganti) | gate-v1-imports 349→0; gate-deps PASS; ': any' port surface 0 (475 non-port justified task-18); tsgo strict exit 0 | **PASS** | task-18/{after-gate-*.log,task-18 JSON} |
-| 26 | Ultrawork (ulw) keyword mode | `session.hook("prompt")` mendeteksi `ultrawork|ulw` (code-stripped, slash-gated) → append directive prompts-core ke `prompt.text` + `session.switchModel` per `agents.<id>.ultrawork` (sticky sampai `/stop-continuation`); `session.hook("context")` re-inject pasca-compaction via `event.system` | **PASS\*** (registrasi + build + tsgo terbukti; firing hook butuh sesi model live — pola sama dgn baris 6) | `packages/omo-opencode/src/v2/ultrawork.ts`; dist/index.js (registerUltrawork + 5 varian directive ter-bundle); task-19 pola smoke |
+| 26 | Ultrawork (ulw) keyword mode | `session.hook("prompt")` mendeteksi `ultrawork|ulw` (code-stripped, slash-gated) → append directive prompts-core ke `prompt.text` + `session.switchModel` per `agents.<id>.ultrawork` (sticky sampai `/stop-continuation`); `session.hook("context")` re-inject pasca-compaction via `event.system` | **PASS\*** (registrasi + build + tsgo terbukti; firing hook butuh sesi model live — pola sama dgn baris 6) | `packages/omo-opencode/src/v2/keyword-detector/` (generalized from `src/v2/ultrawork.ts`; registerKeywordDetector + 5 varian directive ter-bundle di dist/index.js); `keyword-detector.test.ts` hook-level regression pin |
+| 27 | Think keyword mode (variant raise) | `session.hook("prompt")` mendeteksi `think`/`ultrathink` + multilingual V1 arms (code-stripped, slash-gated) → `session.switchModel` dengan model SAMA + `variant: "high"`, kecuali sudah high+ (variant `high`/`xhigh`/`max` atau model id `-high` setelah normalisasi V1); TIDAK switch model; variant menempel di session `Model.Ref` → survive compaction tanpa re-application per request | **PASS\*** (registrasi + hook-level unit proof via fake plugin context — raise/skip-already-high/slash-gate/idempoten/subagent — + build + tsgo; firing pada sesi model live = kelas limitasi baris 6) | `packages/omo-opencode/src/v2/keyword-detector/{index,think-mode}.ts`; `keyword-detector.test.ts` (think arm) |
+| 28 | Team + hyperplan + combo keyword modes | `session.hook("prompt")` mendeteksi `team[\s_-]?mode`, `hyperplan|hpp` (negative lookbehind `.hpp`, upstream #4215), combo strict-adjacency kedua urutan kata → append directive ke `prompt.text`; `session.hook("context")` restore pasca-compaction via marker per-mode; `/stop-continuation` disarm; gates `keyword_detector.disabled_keywords`/`enabled_expansions` + aturan V1 combo-butuh-kedua-base; team body mempertahankan instruksi degraded-mode-nya (team_\* tools belum ada di v2) | **PASS\*** (sama kelas bukti dgn baris 27: arming/restoration/gates/combo-suppression dibuktikan hook-level; firing sesi live = kelas limitasi baris 6) | `packages/omo-opencode/src/v2/keyword-detector/{index,detection,modes}.ts`; `keyword-detector.test.ts` (team/hyperplan/combo arm) |
 
 Inventory coverage: seluruh fitur owner-used dari task-5 inventory (plugin load, tools/hooks,
 client/session/event, agents/subagents, background/continuation/todos, MCP-inject,
@@ -87,10 +89,15 @@ menandai bagian yang membutuhkan model live:
 5. **TUI render terminal nyata** (baris 21) — binding + slot claim + keymap terbukti via
    mock-Context smoke + plugin load; render interaktif butuh TTY (headless harness tidak
    punya). Buktikan ulang di F3 (sesi V2 nyata).
+6. **Keyword-family hook firing** (baris 26–28) — registrasi prompt/context hook,
+   build + tsgo, dan seluruh jalur logika hook (deteksi, gating, arming, disarm,
+   model override, variant raise, restorasi pasca-compaction) dibuktikan hook-level
+   via fake plugin context di `keyword-detector.test.ts`; firing pada sesi model live
+   menyusul pasca-cutover (kelas limitasi yang sama dengan baris 6).
 
 Klasifikasi ini konsisten dengan plan task-19 ("model-dependent → catatan batasan jujur")
 dan TIDAK mengecualikan fitur apa pun tanpa dokumentasi.
 
 ## Verdict
 
-**24/24 fitur PASS (19 PASS penuh + 5 PASS\* dengan limitasi model/TTY terdokumentasi) — 100% matrix PASS.**
+**28/28 fitur PASS (19 PASS penuh + 9 PASS\* dengan limitasi model/TTY terdokumentasi) — 100% matrix PASS.**
